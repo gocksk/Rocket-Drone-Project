@@ -30,9 +30,10 @@ def converge(dv: DesignVars, geo: GeomOut, aero, m_propsys) -> WghtOut:
     # §4 무게중심 — 모든 위치는 기수 기준
     bd = list(st.breakdown_str)
     bd += [
-        MassItem("motors_props", k.N_rot * (m_propsys / (1 + k.k_wire)) / k.N_rot * 0
-                 + m_propsys * 0.85, geo.x_pod, geo.arm_rotor),      # 모터·프롭·ESC 대부분 포드에
-        MassItem("wires", m_propsys * 0.15, geo.l_nose + geo.l_cyl / 2, geo.r_body * 0.5),
+        MassItem("motors_props", m_propsys * k.f_pod_prop,
+                 geo.x_pod, geo.arm_rotor),                          # 모터·프롭·ESC 대부분 포드에
+        MassItem("wires", m_propsys * (1.0 - k.f_pod_prop),
+                 geo.l_nose + geo.l_cyl / 2, geo.r_body * 0.5),      # 나머지 = 배선
         MassItem("batt", m_batt + m_pack, geo.x_parts["batt"], 0.0),
         MassItem("cam_sensor", sum(a[1] for a in srl.avio() if a[0] in ("camera", "sensor")),
                  geo.x_parts["cam_sensor"], 0.0),

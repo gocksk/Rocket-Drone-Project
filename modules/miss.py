@@ -12,12 +12,11 @@ def run(dv: DesignVars, geo, aero, pa, pb, MTOW) -> MissOut:
     W = MTOW * k.g
     E_J = dv.E_batt * 3600.0
     E_usable = E_J * k.DoD
-    k_block = 0.95   # ★ PROP-B와 같은 값 공유 (통합 시 단일 출처로)
     U = pa.U_eval
 
     # 구간 1 — 수직이륙·상승
     t_1 = k.h_to / k.V_climb
-    T_11 = W / (k.N_rot * k_block)
+    T_11 = W / (k.N_rot * k.k_block)
     P1, _, _ = pa.query(k.V_climb, T_11, U)
     E_1 = k.N_rot * P1 * t_1
 
