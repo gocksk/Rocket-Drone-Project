@@ -36,12 +36,74 @@ python common/atm.py  # ATM 단위 검산
 3. **숫자를 코드에 직접 박지 않는다.** 상수는 전부 `constants.py`에서 가져온다.
    새 상수가 필요하면 거기 추가하고 노션 가이드라인 「확정해야 할 상수」에도 등재.
 
-## GitHub 규칙 (간단 버전)
+## GitHub 작업 흐름
 
-- `main` 브랜치에 직접 푸시 금지. 자기 모듈 브랜치(`feat/geom` 등)에서 작업 → PR.
-- PR 올리기 전에 `python main.py`가 **에러 없이 끝나는지** 확인 (합격/불합격은 상관없음.
-  중간에 죽지만 않으면 됨).
-- PR 제목에 모듈명 (예: `[AERO] cd_2d를 NeuralFoil 테이블로 교체`).
+위 「작업 규칙」이 *무엇을 고치나*라면, 여기는 *어떻게 올리나*다.
+
+### 1. 브랜치 파기
+
+`main`에 직접 푸시 금지. 항상 최신 main에서 딴다.
+
+```bash
+git switch main && git pull
+git switch -c feat/geom
+```
+
+이름 규칙 — `feat/<모듈>` (스텁 교체·기능) · `fix/<내용>` (수정) · `docs/<내용>` (문서).
+
+### 2. PR 전 확인
+
+```bash
+python main.py
+```
+
+**에러 없이 끝나기만 하면 된다.** 합격/불합격(g6 FAIL 등)은 상관없음 —
+중간에 죽지만 않으면 통과.
+
+### 3. 커밋
+
+제목에 모듈명을 단다 (예: `[AERO] cd_2d를 NeuralFoil 테이블로 교체`).
+
+- 성격이 다른 변경은 **커밋을 나눈다.** 나중에 한쪽만 되돌릴 수 있다.
+- 미결 사항은 커밋 메시지에 `[확정 필요]`로 남긴다.
+
+### 4. push → PR
+
+```bash
+git push -u origin feat/geom
+```
+
+push하면 터미널에 PR 생성 링크가 뜬다. 본문에는 **무엇을 검증했는지**와
+**미결 사항**을 적는다.
+
+### 5. 머지
+
+**Create a merge commit** 또는 **Rebase and merge**를 쓴다.
+
+⚠️ **Squash and merge는 쓰지 않는다** — 커밋이 하나로 합쳐져 일부만 되돌릴 수 없고,
+메시지에 남긴 `[확정 필요]`가 묻힌다.
+
+### 6. 머지 후 정리
+
+GitHub의 **Delete branch** 버튼을 누르고, 로컬도 정리한다.
+
+```bash
+git switch main && git pull
+git branch -d feat/geom
+```
+
+`-d`는 머지된 브랜치만 지우므로 실수 방지가 된다.
+
+### 남이 머지했을 때
+
+작업 중인 브랜치에 최신 main을 반영한다.
+
+```bash
+git pull origin main --rebase
+```
+
+`constants.py`는 전원이 건드리는 파일이라 **충돌이 가장 잘 난다.**
+브랜치 시작 전 pull, 머지 소식 들으면 rebase — 이 둘만 지키면 대부분 예방된다.
 
 ## 지금 예시 설계점이 g6·g7에서 떨어지는 이유
 
