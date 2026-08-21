@@ -12,7 +12,6 @@ def run(dv: DesignVars, geo, aero, pa, MTOW) -> PropBOut:
     air = atm()
     W = MTOW * k.g
     U = pa.U_eval
-    k_block = 0.95   # ★ 핀 블로케이지 — PROP+GEOM 협의로 확정 (잠정)
 
     def T_req(V):
         return math.sqrt(aero.F_drag(V) ** 2 + W ** 2)
@@ -21,10 +20,10 @@ def run(dv: DesignVars, geo, aero, pa, MTOW) -> PropBOut:
     theta_req_cr = math.atan2(W, aero.F_drag(k.V_cr))
 
     # §4 호버 (g2 먼저 — 뜨지도 못하면 최고속도가 무의미)
-    T_static = pa.T_avail(0.0, U) * k_block
+    T_static = pa.T_avail(0.0, U) * k.k_block
     tw_hover = T_static / W
     g2 = tw_hover / k.tw_min - 1.0
-    T_h1 = W / (k.N_rot * k_block)
+    T_h1 = W / (k.N_rot * k.k_block)
     P1, I1, Q_op = pa.query(0.0, T_h1, U)
     P_hover = k.N_rot * P1
 
@@ -48,10 +47,10 @@ def run(dv: DesignVars, geo, aero, pa, MTOW) -> PropBOut:
 
     # §5 차동추력·차동토크 여유
     T_op = W / k.N_rot
-    dT_up = pa.T_avail(0.0, U) * k_block / k.N_rot - T_op
+    dT_up = pa.T_avail(0.0, U) * k.k_block / k.N_rot - T_op
     dT_down = T_op - 0.0                     # T_min = 0 (고정피치·단방향)
     dT_max = max(min(dT_up, dT_down), 0.0)
-    _, _, Q_hi = pa.query(0.0, (T_op + dT_max) / k_block, U)
+    _, _, Q_hi = pa.query(0.0, (T_op + dT_max) / k.k_block, U)
     dQ_max = abs(Q_hi - Q_op)
 
     # §6 호버 소음 — 앵커 스케일링

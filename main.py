@@ -8,6 +8,7 @@
 """
 from interfaces import DesignVars, Result
 from common import srl
+from common.out import stdout_utf8
 from modules import geom, aero, prop_a, wght, prop_b, miss, stab, cost
 import constants as k
 
@@ -67,6 +68,7 @@ def evaluate(dv: DesignVars) -> Result:
 
 
 def report(r: Result):
+    stdout_utf8()
     print("=" * 58)
     if r.fail_stage:
         print(f"조기 탈락: {r.fail_stage}")
