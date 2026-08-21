@@ -29,6 +29,12 @@ def atm(h: float = 0.0, dT: float = 0.0) -> Air:
 
 
 if __name__ == "__main__":  # 검산 (가이드라인 §1·§2)
+    # `python common/atm.py`는 sys.path[0]이 common/이라 저장소 루트를 먼저 얹는다.
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+    from common.out import stdout_utf8
+    stdout_utf8()
+
     a = atm(0.0, 0.0)
     assert abs(a.rho - 1.225) < 1e-3, a.rho
     assert abs(a.a_snd - 340.3) < 0.1, a.a_snd

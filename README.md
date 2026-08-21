@@ -15,6 +15,7 @@ python common/atm.py  # ATM 단위 검산
 | `main.py` `interfaces.py` | **통합** | 실제 구현 — 다른 사람은 수정 금지 |
 | `constants.py` | 통합 (값은 각 담당이 제안) | ★ = 잠정값, 「할 일 통합 목록」 참조 |
 | `common/atm.py` | 통합 | 실제 구현 (검산 포함) |
+| `common/out.py` | 통합 | 실제 구현 (출력 인코딩 고정 — 진입점에서만 호출) |
 | `common/srl.py` | 조사 담당 | **[스텁]** → 스펙표 회귀로 교체 |
 | `modules/geom.py` | GEOM | 가이드라인 수식 구현됨 → **검토·보완** |
 | `modules/aero.py` | AERO | 골격 구현, `cd_2d`만 스텁 |
