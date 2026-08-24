@@ -1,6 +1,13 @@
 """WGHT — 무게 합산·수렴. [실제 구현 — 통합의 핵심]
-가이드라인: 「WGHT 계산 가이드라인 — 무게 합산·수렴」
-DSM ②구획 {STRC ↔ WGHT} 루프가 여기다. 피드백은 MTOW 단 하나.
+ICD0-008 §5.1 WGHT · §5 ▶사이징 루프 상세
+① 사이징 루프가 여기다. 되먹임은 MTOW 단 하나.
+
+[ICD0-008 계약 일반화 — §8 C-3]
+응답 질량이 구조 하나에서 구조+모터+배터리 셋으로 늘어났다. 그래서 주입 함수를
+  strc_of(MTOW) -> StrcOut          (ICD0-007)
+  resp_of(MTOW) -> (응답질량_합, payload)   (ICD0-008)
+로 일반화했다. payload 는 루프가 **들여다보지 않는** 불투명 객체다.
+수학·상태머신·판정 로직은 무변경이다 — 아래 _iterate 의 분기는 한 줄도 바뀌지 않았다.
 
 [수렴을 '되나/안되나'가 아니라 '왜 안되나'로 나눈다 — §3]
 반복이 안 끝나는 이유는 셋이고, 책임 소재가 서로 다르다.
@@ -17,9 +24,7 @@ beta 는 갱신식과 Ŝ 환산식 두 줄에만 등장한다. 판정·가드 �
 양을 두지 않는다. 그래서 '완화된 스텝(Δ)'이라는 변수를 아예 만들지 않고 resid 만 쓴다.
 """
 import constants as k
-from interfaces import DesignVars, GeomOut, WghtOut, MassItem
-from common import srl
-from modules import strc
+from interfaces import WghtOut, MassProps
 
 
 def _options(over=None):
@@ -31,18 +36,20 @@ def _options(over=None):
     return o
 
 
-def _iterate(MTOW_0, m_fixed, strc_of, options=None):
+def _iterate(MTOW_0, m_fixed, resp_of, options=None):
     """MTOW 고정점 반복 — 순수 함수.
 
     MTOW_0   : 초기 추정값 [kg]
     m_fixed  : MTOW 와 무관한 질량 합 [kg]
-    strc_of  : MTOW -> StrcOut 인 순수 함수. dv/geo/aero 는 호출부가 닫아서 넘긴다.
+    resp_of  : MTOW -> (응답질량_합[kg], payload) 인 순수 함수.
+               dv/hull/aero/맵은 호출부가 닫아서 넘긴다. payload 는 불투명 객체라
+               이 루프가 내용을 들여다보지 않는다.
     options  : _options() 참조
 
-    이 함수가 dv/geo/aero 를 모르는 것이 핵심이다. 그래야 수렴 특성을
-    가짜 STRC(정답을 아는 스텁)로 단독 검증할 수 있다 — validation/wght/ 참조.
+    이 함수가 dv/hull/aero 를 모르는 것이 핵심이다. 그래야 수렴 특성을
+    가짜 응답 모델(정답을 아는 스텁)로 단독 검증할 수 있다 — validation/wght/ 참조.
 
-    반환: {'MTOW', 'strc', 'status', 'S_hat', 'err', 'n_iter', 'history'}
+    반환: {'MTOW', 'payload', 'status', 'S_hat', 'err', 'n_iter', 'history'}
       MTOW  : 마지막 STRC 호출의 합 (완화된 반복값이 아니다). Σbreakdown 과 항등
       status: converged / diverged_structural / diverged_numerical / limit_cycle / max_iter
       S_hat : 수렴점 근방의 dm_str/dMTOW. 추정 불가 시 None
@@ -63,16 +70,16 @@ def _iterate(MTOW_0, m_fixed, strc_of, options=None):
             "하한 가드가 항상 먼저 발동해 eps_conv 가 아무 역할도 못 합니다.")
 
     MTOW = MTOW_0
-    st = raw = resid = None
+    pl = raw = resid = None
     status, S_hat, err = 'max_iter', None, None
-    resid_prev, prev = None, None      # prev = (raw, resid, st) — 리밋사이클 분기 선택용
+    resid_prev, prev = None, None      # prev = (raw, resid, pl) — 리밋사이클 분기 선택용
     n_div_struct = n_div_osc = n_cycle = 0
     history = []
     it = 0
 
     for it in range(1, o['N_iter_max'] + 1):
-        st = strc_of(MTOW)
-        raw = m_fixed + st.m_str       # 반환 대상. Σbreakdown 과 항등 (§4)
+        m_resp, pl = resp_of(MTOW)
+        raw = m_fixed + m_resp         # 반환 대상. Σbreakdown 과 항등 (§4)
         resid = raw - MTOW             # 완화 전, 부호 유지
         history.append((MTOW, raw, resid))
 
@@ -120,7 +127,7 @@ def _iterate(MTOW_0, m_fixed, strc_of, options=None):
                 if n_cycle >= o['n_confirm'] and prev is not None:
                     err = abs(raw - prev[0]) / 2.0        # 양자/2
                     if abs(prev[1]) < abs(resid):
-                        raw, st = prev[0], prev[2]
+                        raw, pl = prev[0], prev[2]
                     status = 'limit_cycle'
                     break
 
@@ -135,7 +142,7 @@ def _iterate(MTOW_0, m_fixed, strc_of, options=None):
                     break
 
         resid_prev = resid
-        prev = (raw, resid, st)
+        prev = (raw, resid, pl)
         MTOW = MTOW + o['beta'] * resid        # 갱신 — beta 는 여기서만 쓴다
     else:
         # ── (6) 반복 소진 ──
@@ -143,73 +150,75 @@ def _iterate(MTOW_0, m_fixed, strc_of, options=None):
         if S_hat is not None and S_hat < 1.0:
             err = abs(S_hat) * abs(resid) / (1.0 - S_hat)
 
-    return {'MTOW': raw, 'strc': st, 'status': status, 'S_hat': S_hat,
+    return {'MTOW': raw, 'payload': pl, 'status': status, 'S_hat': S_hat,
             'err': None if err is None else abs(err),
             'n_iter': it, 'history': history}
 
 
-def converge(dv: DesignVars, geo: GeomOut, aero, m_propsys) -> WghtOut:
-    # §2 고정 질량 (루프 진입 전 1회)
-    m_batt = dv.E_batt / k.e_spec
-    m_pack = k.k_pack * m_batt
-    avio_list = srl.avio()
-    m_avio = sum(a[1] for a in avio_list)
-    m_fixed = m_propsys + m_batt + m_pack + m_avio
-    strc_fixed = strc.fixed_masses(dv, geo)
+# limit_cycle 은 '이산화 한계까지 수렴'이지 실패가 아니다. 탈락으로 두면
+# 런처가 해석 실패로 분류해 정상 설계점이 통째로 후보에서 빠진다 (§5 ▶수렴·발산 분류).
+_OK_STATUS = ('converged', 'limit_cycle')
 
-    # §3 수렴 루프 — 되먹임은 MTOW 하나뿐이므로 STRC 를 MTOW 만 받는 함수로 닫는다.
-    def strc_of(MTOW):
-        return strc.run(dv, geo, aero.q_cr, aero.CN_alpha_fin, MTOW, strc_fixed)
 
-    res = _iterate(k.k_init * m_fixed, m_fixed, strc_of)
-    st = res['strc']
+def converge(m_fixed: float, resp_of, options=None) -> WghtOut:
+    """① MTOW 고정점 반복.  ICD0-008 §5 ▶사이징 루프 상세
 
-    # §4 무게중심 — 모든 위치는 기수 기준
-    #
-    # 아래 두 분류는 품목명을 하드코딩한다. 그래서 SRL 목록에 새 품목이 늘면
-    # m_fixed(=수렴 루프)에는 반영되는데 breakdown 에는 안 들어가고, 반환 MTOW 가
-    # 곧 Σbreakdown 이므로 그 차액이 예외도 경고도 없이 사라진다.
-    # 잔여를 avio_etc 로 받아 목록 전체를 덮는다.
-    m_cam = sum(a[1] for a in avio_list if a[0] in ("camera", "sensor"))
-    m_fc = sum(a[1] for a in avio_list if a[0] in ("fc", "rx_vtx"))
-    m_etc = m_avio - m_cam - m_fc
+    m_fixed : MTOW 와 무관한 질량 합 [kg] — 런처가 조립해서 넘긴다
+    resp_of : MTOW -> (응답질량_합, payload) 인 **순수 함수**. 같은 MTOW 에 항상
+              같은 값이 나와야 하며, 깨지면 배치 실행에서 설계점끼리 오염된다.
 
-    bd = list(st.breakdown_str)
-    bd += [
-        MassItem("motors_props", m_propsys * k.f_pod_prop,
-                 geo.x_pod, geo.arm_rotor),                          # 모터·프롭·ESC 대부분 포드에
-        MassItem("wires", m_propsys * (1.0 - k.f_pod_prop),
-                 geo.l_nose + geo.l_cyl / 2, geo.r_body * 0.5),      # 나머지 = 배선
-        MassItem("batt", m_batt + m_pack, geo.x_parts["batt"], 0.0),
-        MassItem("cam_sensor", m_cam, geo.x_parts["cam_sensor"], 0.0),
-        MassItem("fc_esc", m_fc, geo.x_parts["fc_esc"], 0.0),
-    ]
-    if m_etc > 1e-12:
-        # 위 4종 밖의 항전 품목(RTK 로버·BEC 등). 위치는 GEOM 이 x_parts 에
-        # 전용 키를 내주기 전까지 FC/ESC 칸에 얹어 둔다 — [확정 필요]
-        bd.append(MassItem("avio_etc", m_etc, geo.x_parts["fc_esc"], 0.0))
+    초기값 MTOW₀ = k_init × m_fixed — 수렴값에 영향 없고 반복 횟수에만 영향을 준다.
 
+    질량 특성(x_cg·J)은 여기서 내지 않는다. 위치를 주는 geom.layout 이 ②라
+    수렴 뒤에야 계산할 수 있다 → mass_props() 참조. [확정 필요 — ICD §5.1 은
+    x_cg·J 를 WGHT(①) 출력으로 적고 있으나 layout 은 ②다]
+    """
+    res = _iterate(k.k_init * m_fixed, m_fixed, resp_of, options)
+    ok = res['status'] in _OK_STATUS
+    return WghtOut(
+        MTOW=res['MTOW'],
+        g4=1.0 if ok else -1.0,
+        status=res['status'],
+        S_hat=res['S_hat'],
+        err=res['err'],
+        n_iter=res['n_iter'],
+        payload=res['payload'],
+        history=res['history'],
+    )
+
+
+def growth_split(history: list, resp_parts_of) -> dict:
+    """성장계수 분해 — 각 응답 질량의 민감도 S_i ≈ Δm_i/ΔMTOW (§5 ▶수렴·발산 분류).
+
+    Ŝ_total = Σ S_i 이며 '스노우볼에 누가 기여하는가'의 지도가 된다.
+
+    [스텁] P7(통합 게이트)에서 구현한다 — 수렴 이력의 인접 두 점에서
+           구조·모터·배터리 각각의 차분을 뽑으면 된다.
+    """
+    return {"struct": None, "motor": None, "batt": None}   # [스텁]
+
+
+def mass_props(MTOW: float, bd: list, l_body: float) -> MassProps:
+    """② 배치 확정 후 1회 — 무게중심 · 3축 관성.
+
+    bd : [MassItem] 전체 질량 분해표. 위치는 geom.layout 이 정한 x_parts 에서 온다.
+         bd[0] 은 동체 쉘이어야 한다 (아래 길이항 J 가 그것만 쓴다).
+
+    항등식 MTOW == Σbd 를 깨지 않는다 — 질량 항목 분류가 목록을 못 덮는 날,
+    조용히 틀린 무게가 나가는 대신 거기서 즉시 멈춘다.
+    """
     m_tot = sum(i.m for i in bd)
-
-    # MTOW == Σbreakdown 을 '항등식'으로 유지한다 — 그래야 검산이 따로 필요 없다.
-    # 위 분류가 목록을 못 덮는 날이 오면 조용히 틀린 무게가 나가는 대신 여기서 죽는다.
-    if abs(m_tot - res['MTOW']) > 1e-9 * max(res['MTOW'], 1.0):
+    if abs(m_tot - MTOW) > 1e-9 * max(MTOW, 1.0):
         raise ValueError(
-            f"breakdown 합({m_tot:.9f} kg)이 수렴값({res['MTOW']:.9f} kg)과 다릅니다 "
-            f"— 질량 항목 분류 누락 (차이 {(m_tot - res['MTOW']) * 1000:+.3f} g)")
+            f"breakdown 합({m_tot:.9f} kg)이 수렴값({MTOW:.9f} kg)과 다릅니다 "
+            f"— 질량 항목 분류 누락 (차이 {(m_tot - MTOW) * 1000:+.3f} g)")
 
     x_cg = sum(i.m * i.x for i in bd) / m_tot
 
-    # §5 3축 관성 (x=롤, y=피치, z=요 · 축대칭 → J_yy=J_zz)
+    # 3축 관성 (x=롤, y=피치, z=요 · 축대칭 → J_yy=J_zz)
     J_xx = sum(i.m * i.r ** 2 for i in bd)
-    J_shell_len = st.breakdown_str[0].m * geo.l_body ** 2 / 12.0   # 동체 쉘만 길이항
+    J_shell_len = bd[0].m * l_body ** 2 / 12.0        # 동체 쉘만 길이항
     J_yy = sum(i.m * ((i.x - x_cg) ** 2 + 0.5 * i.r ** 2) for i in bd) + J_shell_len
     J_zz = J_yy
 
-    # limit_cycle 은 '이산화 한계까지 수렴'이지 실패가 아니다. False 로 두면
-    # main.py 가 해석 실패로 분류해 정상 설계점이 통째로 탈락한다.
-    converged = res['status'] in ('converged', 'limit_cycle')
-
-    return WghtOut(MTOW=m_tot, x_cg=x_cg, J_xx=J_xx, J_yy=J_yy, J_zz=J_zz,
-                   breakdown=bd, converged=converged, n_iter=res['n_iter'], strc=st,
-                   status=res['status'], S_hat=res['S_hat'], err=res['err'])
+    return MassProps(x_cg=x_cg, J_xx=J_xx, J_yy=J_yy, J_zz=J_zz, breakdown=bd)
