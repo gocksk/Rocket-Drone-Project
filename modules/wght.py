@@ -211,4 +211,5 @@ def converge(dv: DesignVars, geo: GeomOut, aero, m_propsys) -> WghtOut:
     converged = res['status'] in ('converged', 'limit_cycle')
 
     return WghtOut(MTOW=m_tot, x_cg=x_cg, J_xx=J_xx, J_yy=J_yy, J_zz=J_zz,
-                   breakdown=bd, converged=converged, n_iter=res['n_iter'], strc=st)
+                   breakdown=bd, converged=converged, n_iter=res['n_iter'], strc=st,
+                   status=res['status'], S_hat=res['S_hat'], err=res['err'])
