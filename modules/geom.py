@@ -1,83 +1,61 @@
-"""GEOM — 형상·배치. [가이드라인 수식 구현 — 담당 검토·보완 필요]
-가이드라인: 「GEOM 계산 가이드라인 — 형상·배치」 (개정 002)
-순수 대수라 스텁 대신 가이드라인 §2~§7을 그대로 옮겼다.
-GEOM 담당은 식이 문서와 일치하는지 검토하고, 빠진 세부를 보완한다.
+"""GEOM — 외형 · 배치 · 내장 판정.  ICD0-008 §5.1
+
+함수 세 개의 실행 시점이 다르다: hull 은 ⓪, layout·check_fit 은 ②.
+
+[스텁] 이 파일은 배관만 깔려 있다. P2(hull)·P6 이후(layout·check_fit)에서 구현한다.
+       아래 반환값은 전부 파이프라인이 흐르게 하려고 넣은 자리표시 숫자이며
+       물리적 근거가 없다. STUBS.md 참조.
 """
-import math
 import constants as k
-from interfaces import DesignVars, GeomOut
-from common import srl
+from interfaces import DesignVars, HullOut, LayoutOut, FitOut
 
 
-def run(dv: DesignVars, parts) -> GeomOut:
-    mot, es, bt = parts["motor"], parts["esc"], parts["batt"]
+def hull(dv: DesignVars) -> HullOut:
+    """⓪ 외형 확정 — 대수 계산만, 반복 없음.
 
-    # §2 동체 기본 치수
-    l_body = dv.lambda_body * dv.d_body
-    l_nose = k.f_nose * dv.d_body
-    l_cyl = l_body - l_nose
-    r_body = dv.d_body / 2.0
-    S_ref = math.pi * dv.d_body ** 2 / 4.0
-    S_base = S_ref
+    [스텁] 구현 예정 (P2):
+        S_ref  = π·d_body²/4
+        l_body = d_body × lambda_body
+        S_wet  = 노즈 표면적 + 원통 측면적 + 핀 양면
+        핀 스팬·코드를 S_fin 과 AR_fin 에서 역산
+    """
+    return HullOut(
+        S_ref=1.0,      # [스텁] 실제 값 아님
+        S_wet=1.0,      # [스텁]
+        l_body=1.0,     # [스텁] ← EC C8 이 지금 가짜라는 뜻
+        r_body=1.0,     # [스텁]
+        b_fin=1.0,      # [스텁]
+        c_root=1.0,     # [스텁]
+        c_tip=1.0,      # [스텁]
+        x_fin=dv.x_fin,
+        l_nose=1.0,     # [스텁]
+        l_cyl=1.0,      # [스텁]
+    )
 
-    # §3 핀 제원 전개
-    S_1 = dv.S_fin / k.N_rot
-    b_1 = math.sqrt(dv.AR_fin * S_1)
-    c_r = 2.0 * S_1 / (b_1 * (1.0 + k.lam_fin))
-    c_t = k.lam_fin * c_r
-    x_t = c_r - c_t
-    t_fin = k.tc_fin * c_r
 
-    # §4 포드·프롭 배치 (핀 결합)
-    arm_rotor = r_body + dv.f_mount * b_1
-    root_arm = dv.f_mount * b_1
-    d_pod = dv.d_stat + 2.0 * k.t_pod
-    l_pod = max(k.f_pod * d_pod, dv.h_stat + es.l_esc + 0.005)
-    x_pod = dv.x_fin + k.f_pod_c * c_r
-    x_prop = x_pod + l_pod / 2.0 + k.d_hub
+def layout(dv: DesignVars, hl: HullOut, dims: dict) -> LayoutOut:
+    """② 부품 배치 — 사이징 후 확정된 치수를 받아 기수부터 쌓는다.
 
-    # §5 면적 집계 (암 항 없음 — 핀 일체형)
-    S_wet = {
-        "nose": k.k_nose * math.pi * dv.d_body * l_nose,
-        "cyl": math.pi * dv.d_body * l_cyl,
-        "fin": 2.0 * dv.S_fin * k.k_thk,
-        "pod": k.N_rot * math.pi * d_pod * l_pod * k.k_form,
-    }
-    A_front_pod = k.N_rot * math.pi * d_pod ** 2 / 4.0
-    N_junc = 2 * k.N_rot
+    dims : {부품명: (L, W, H)} — 배터리·모터는 부피 = 질량/rho_* 로 환산해 온다.
 
-    # §6 내부 공간과 부품 배치 (순서 고정: 카메라·센서 → 배터리 → FC/ESC)
-    t_wall = k.t_0 + k.k_t * (dv.n_design - k.n_ref_load)
-    d_int = dv.d_body - 2.0 * t_wall
-    l_int = l_cyl - 2.0 * k.d_end
-    avio = srl.avio()
-    cam_L = sum(a[2] for a in avio if a[0] in ("camera", "sensor"))
-    fc_L = sum(a[2] for a in avio if a[0] in ("fc", "rx_vtx"))
-    seq = [("cam_sensor", cam_L, max(a[3] for a in avio), max(a[4] for a in avio)),
-           ("batt", bt.L, bt.W, bt.H),
-           ("fc_esc", fc_L, 0.030, 0.014)]
-    x_parts, x_cur = {}, l_nose + k.d_end
-    for name, L, _, _ in seq:
-        x_parts[name] = x_cur + L / 2.0
-        x_cur += L
+    [스텁] 구현 예정:
+        배치 규칙 순서 — 카메라 → 센서 → 배터리 → FC/ESC
+        arm_rotor 는 f_mount 와 핀 스팬에서 나온다
+    """
+    return LayoutOut(
+        x_parts={name: 0.0 for name in dims},   # [스텁] 전부 기수에 겹쳐 둔 상태
+        arm_rotor=1.0,                          # [스텁]
+    )
 
-    # §7 합격 조건
-    diag_max = max(math.sqrt(w ** 2 + h ** 2) for _, _, w, h in seq)
-    sum_L = sum(L for _, L, _, _ in seq)
-    g9 = min(0.95 * d_int / diag_max - 1.0,
-             0.95 * l_int / max(sum_L, 1e-9) - 1.0)
-    g_adj = math.sqrt(2.0) * arm_rotor / (dv.d_prop * (1.0 + k.d_clr)) - 1.0
-    g_body = ((arm_rotor - dv.d_prop / 2.0) / (r_body * (1.0 + k.d_clr)) - 1.0
-              if x_prop < l_body else 1.0)
-    g_ax = (x_prop - (dv.x_fin + c_r + k.d_ax)) / l_body
-    g_clear = min(g_adj, g_body, g_ax)
 
-    return GeomOut(l_body=l_body, l_nose=l_nose, l_cyl=l_cyl, r_body=r_body,
-                   S_ref=S_ref, S_base=S_base, S_wet=S_wet,
-                   A_front_pod=A_front_pod, N_junc=N_junc,
-                   b_1=b_1, c_r=c_r, c_t=c_t, x_t=x_t, t_fin=t_fin,
-                   x_fin=dv.x_fin, d_pod=d_pod, l_pod=l_pod,
-                   x_pod=x_pod, x_prop=x_prop,
-                   arm_rotor=arm_rotor, root_arm=root_arm,
-                   t_wall=t_wall, d_int=d_int, x_parts=x_parts,
-                   g9=g9, g_clear=g_clear)
+def check_fit(dv: DesignVars, hl: HullOut, lay: LayoutOut, dims: dict) -> FitOut:
+    """② 내장 · 클리어런스 판정. 둘 다 양수면 합격.
+
+    [스텁] 구현 예정:
+        g6 = 가용 길이 − 부품 점유 길이 (단면 여유도 함께 검사)
+        g7 = arm_rotor − d_prop/2 − r_body − d_clr
+    """
+    return FitOut(
+        g6=0.0,   # [스텁] 실제 판정 아님
+        g7=0.0,   # [스텁]
+    )

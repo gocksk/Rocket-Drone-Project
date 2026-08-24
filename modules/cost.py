@@ -1,28 +1,32 @@
-"""COST — 비용. [골격 구현 — 단가는 SRL 스텁 의존]
-가이드라인: 「COST 계산 가이드라인 — 비용」
+"""COST — 취득비.  ICD0-008 §5.1
+
+정밀도: C7 가중치가 4.2% 라 대표값 수준이면 충분하다.
+여기에 정확도 예산을 쓸 자리가 아니다.
+
+[스텁] P6 에서 구현한다 — 단가 계수가 전부 TBD(§8 B-1)라 값이 없다.
 """
 import constants as k
-from interfaces import DesignVars, CostOut
-from common import srl
+from interfaces import CostOut
 
 
-def run(dv: DesignVars, parts, I_max, m_print, E_req_J) -> CostOut:
-    C_mot = k.N_rot * parts["motor"].price
-    C_prop = k.N_rot * parts["prop"].price
-    C_esc = k.N_rot * srl.esc(I_max * k.k_margin).price
-    C_batt = parts["batt"].price
-    C_avio = sum(a[5] for a in srl.avio())
-    C_parts = C_mot + C_prop + C_esc + C_batt + C_avio
+def run(m_mot: float, P_cont: float, E_batt: float, d_prop: float,
+        I_max: float, m_print: float) -> CostOut:
+    """② 단가 계수 × 각 항 합산.
 
-    C_print = m_print * k.c_filament
-    C_misc = k.k_misc * C_parts
-    Cost_acq = (C_parts + C_print + C_misc) * (1.0 + k.k_spare) * k.k_import
-
-    C_elec = (E_req_J / 3.6e6) * k.p_kWh
-    C_cycle = C_batt / k.N_cycle
-    C_wear = k.k_wear * C_prop
-    Cost_op = C_elec + C_cycle + C_wear
-
-    bd = {"motor": C_mot, "prop": C_prop, "esc": C_esc, "batt": C_batt,
-          "avio": C_avio, "print": C_print, "misc": C_misc}
-    return CostOut(Cost_acq=Cost_acq, Cost_op=Cost_op, breakdown=bd)
+    [스텁] 구현 예정 (P6):
+        모터        : c_mot_krw  × 연속출력
+        배터리      : c_batt_krw × E_batt
+        프롭        : c_prop_krw × 기수(N_rot)
+        ESC         : c_esc_krw  × 요구 정격(I_max × k_esc_margin)
+        프린트 재료 : m_print × c_filament_krw
+        항전        : AVIO_LIST 단가 합
+    """
+    bd = {
+        "motor": 0.0,     # [스텁]
+        "batt": 0.0,      # [스텁]
+        "prop": 0.0,      # [스텁]
+        "esc": 0.0,       # [스텁]
+        "print": 0.0,     # [스텁]
+        "avio": 0.0,      # [스텁]
+    }
+    return CostOut(Cost_acq=sum(bd.values()), breakdown=bd)   # [스텁] ← EC C7
