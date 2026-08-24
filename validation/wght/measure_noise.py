@@ -117,7 +117,7 @@ def real_strc_case():
     ⚠ 응답 질량 중 구조 항만 물린다 — 모터·배터리는 아직 스텁이다 (§8 C-4 미완).
     """
     dv = DesignVars(d_body=0.09, lambda_body=7.0, S_fin=0.036, x_fin=0.50, AR_fin=2.2,
-                    f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.30, n_ser=6,
+                    f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.50, n_ser=6,
                     k_E=1.0, k_mot=1.0)
     pre = main.preprocess(dv)
     m_fixed = k.W_pl + sum(x[1] for x in k.AVIO_LIST) + k.N_rot * pre.pmap.m_prop

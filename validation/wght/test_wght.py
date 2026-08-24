@@ -38,7 +38,7 @@ M_FIXED = 5.0          # 임의의 고정 질량 [kg] — 값 자체는 결과�
 
 # 실제 파이프라인용 대표 설계점 — 범위가 전부 TBD 라 이 숫자들도 스모크용이다.
 BASE_DV = dict(d_body=0.09, lambda_body=7.0, S_fin=0.036, x_fin=0.50, AR_fin=2.2,
-               f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.30, n_ser=6,
+               f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.50, n_ser=6,
                k_E=1.0, k_mot=1.0)
 
 
