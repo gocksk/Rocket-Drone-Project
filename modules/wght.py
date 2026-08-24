@@ -152,7 +152,8 @@ def converge(dv: DesignVars, geo: GeomOut, aero, m_propsys) -> WghtOut:
     # §2 고정 질량 (루프 진입 전 1회)
     m_batt = dv.E_batt / k.e_spec
     m_pack = k.k_pack * m_batt
-    m_avio = sum(a[1] for a in srl.avio())
+    avio_list = srl.avio()
+    m_avio = sum(a[1] for a in avio_list)
     m_fixed = m_propsys + m_batt + m_pack + m_avio
     strc_fixed = strc.fixed_masses(dv, geo)
 
@@ -164,6 +165,15 @@ def converge(dv: DesignVars, geo: GeomOut, aero, m_propsys) -> WghtOut:
     st = res['strc']
 
     # §4 무게중심 — 모든 위치는 기수 기준
+    #
+    # 아래 두 분류는 품목명을 하드코딩한다. 그래서 SRL 목록에 새 품목이 늘면
+    # m_fixed(=수렴 루프)에는 반영되는데 breakdown 에는 안 들어가고, 반환 MTOW 가
+    # 곧 Σbreakdown 이므로 그 차액이 예외도 경고도 없이 사라진다.
+    # 잔여를 avio_etc 로 받아 목록 전체를 덮는다.
+    m_cam = sum(a[1] for a in avio_list if a[0] in ("camera", "sensor"))
+    m_fc = sum(a[1] for a in avio_list if a[0] in ("fc", "rx_vtx"))
+    m_etc = m_avio - m_cam - m_fc
+
     bd = list(st.breakdown_str)
     bd += [
         MassItem("motors_props", m_propsys * k.f_pod_prop,
@@ -171,12 +181,23 @@ def converge(dv: DesignVars, geo: GeomOut, aero, m_propsys) -> WghtOut:
         MassItem("wires", m_propsys * (1.0 - k.f_pod_prop),
                  geo.l_nose + geo.l_cyl / 2, geo.r_body * 0.5),      # 나머지 = 배선
         MassItem("batt", m_batt + m_pack, geo.x_parts["batt"], 0.0),
-        MassItem("cam_sensor", sum(a[1] for a in srl.avio() if a[0] in ("camera", "sensor")),
-                 geo.x_parts["cam_sensor"], 0.0),
-        MassItem("fc_esc", sum(a[1] for a in srl.avio() if a[0] in ("fc", "rx_vtx")),
-                 geo.x_parts["fc_esc"], 0.0),
+        MassItem("cam_sensor", m_cam, geo.x_parts["cam_sensor"], 0.0),
+        MassItem("fc_esc", m_fc, geo.x_parts["fc_esc"], 0.0),
     ]
+    if m_etc > 1e-12:
+        # 위 4종 밖의 항전 품목(RTK 로버·BEC 등). 위치는 GEOM 이 x_parts 에
+        # 전용 키를 내주기 전까지 FC/ESC 칸에 얹어 둔다 — [확정 필요]
+        bd.append(MassItem("avio_etc", m_etc, geo.x_parts["fc_esc"], 0.0))
+
     m_tot = sum(i.m for i in bd)
+
+    # MTOW == Σbreakdown 을 '항등식'으로 유지한다 — 그래야 검산이 따로 필요 없다.
+    # 위 분류가 목록을 못 덮는 날이 오면 조용히 틀린 무게가 나가는 대신 여기서 죽는다.
+    if abs(m_tot - res['MTOW']) > 1e-9 * max(res['MTOW'], 1.0):
+        raise ValueError(
+            f"breakdown 합({m_tot:.9f} kg)이 수렴값({res['MTOW']:.9f} kg)과 다릅니다 "
+            f"— 질량 항목 분류 누락 (차이 {(m_tot - res['MTOW']) * 1000:+.3f} g)")
+
     x_cg = sum(i.m * i.x for i in bd) / m_tot
 
     # §5 3축 관성 (x=롤, y=피치, z=요 · 축대칭 → J_yy=J_zz)
