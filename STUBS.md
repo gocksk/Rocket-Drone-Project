@@ -114,10 +114,21 @@ ICD §8 B 에 대응한다. 붙은 숫자는 전부 임시다.
 
 ## 3. 지금 깨져 있는 것
 
-- **`validation/wght/` 16종 테스트가 안 돈다.** `common/srl` 과 ICD0-007 형상
-  (`StrcOut.m_str`, `_iterate` 의 `strc_of`)에 묶여 있다. **P1 의 작업 범위**다
-  (`strc_stub.py` 반환 형태 · `test_wght.py` 의 `pipeline()` → `main.preprocess()`).
-  따라서 `.github/workflows/ci.yml` 의 두 번째 스텝이 P1 전까지 빨간불이다.
+- **`validation/wght/test_wght.py` 16종 중 1종 실패 — TEST 13(c).**
+  `arm_rotor` 를 늘렸을 때 `J_xx` 가 커지는지 보는 항목인데, 전제인 "arm_rotor 가
+  커진다"가 성립하지 않아 거기서 멈춘다. `geom.layout` 이 스텁이라 `f_mount` 를
+  무시하고 `arm_rotor = 1.0` 을 고정 반환하기 때문이다 (**GEOM 사유, WGHT 아님**).
+  `wght.mass_props` 자체는 `Σm·r²` 로 정확히 반응하는 것을 단독 확인했다
+  (r=0.10/0.20/0.40 → J_xx=2.000/8.000/32.000 g·m², 이론값 일치).
+  → **P2(`geom.hull`)·`geom.layout` 구현이 끝나면 자동으로 풀린다.**
+
+  **이 실패는 의도적으로 남겨 둔 것이다.** 테스트를 고치거나 skip 표시하지 않는다 —
+  이 한 줄이 "GEOM 배치가 아직 스텁"이라는 사실을 가리키는 알람 역할을 하고,
+  P2 가 끝나면 알람이 스스로 꺼지는 것이 완료 판정이 된다.
+  그때까지 `.github/workflows/ci.yml` 의 WGHT 검증 스텝은 빨간불이다.
+- **`measure_noise.py` 는 응답 질량 중 구조 항만 잰다.** ICD §8 C-4 는 측정 대상을
+  전체 응답 질량(구조+모터+배터리)으로 넓히라고 하는데 PROP·MISS 가 스텁이다.
+  P4·P5 와 `dt_miss` 확정 후 다시 재야 한다.
 - **`README.md` 의 파일 표가 ICD0-007 기준**이다 (`prop_a` `prop_b` `common/srl`).
   담당자 배정 정보가 섞여 있어 임의로 고치지 않았다.
 
