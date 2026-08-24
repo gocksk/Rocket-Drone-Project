@@ -4,8 +4,9 @@ ICD0-007과 모듈 가이드라인 11개를 코드 구조로 옮긴 것.
 **지금 상태로 실행됩니다** — 물리 자리에 가짜 숫자(스텁)가 들어 있을 뿐입니다.
 
 ```
-python main.py        # 전체 파이프라인 실행 (수렴 + 합격 판정 + 성적표)
-python common/atm.py  # ATM 단위 검산
+python3 main.py                          # 전체 파이프라인 (수렴 + 합격 판정 + 성적표)
+python3 common/atm.py                    # ATM 단위 검산
+python3 -m validation.wght.test_wght     # WGHT 검증 16종
 ```
 
 ## 폴더 구조 = 담당 구조
@@ -21,11 +22,13 @@ python common/atm.py  # ATM 단위 검산
 | `modules/aero.py` | AERO | 골격 구현, `cd_2d`만 스텁 |
 | `modules/prop_a.py` | PROP | **[스텁]** → BEMT 테이블+이분법으로 교체 |
 | `modules/strc.py` | STRC | 골격 구현, `k_sl_*` 계수만 실측 필요 |
-| `modules/wght.py` | 통합 | 실제 구현 (수렴 루프) |
+| `modules/wght.py` | **WGHT** (이강준) | 실제 구현 (수렴 루프 + 상태 분류) |
 | `modules/prop_b.py` | PROP | 구조 구현 (PROP-A 교체되면 자동으로 진짜가 됨) |
 | `modules/miss.py` | MISS | 구조 구현 (시간전진) |
 | `modules/stab.py` | STAB | 구조 구현 |
 | `modules/cost.py` | COST | 골격 구현 (단가는 SRL 의존) |
+| `validation/wght/` | WGHT (이강준) | 검증 자산 — 테스트 16종·STRC 스텁·실측 도구 |
+| `.github/workflows/` | 통합 | PR마다 자동 검사 |
 
 ## 작업 규칙 세 가지
 
@@ -54,11 +57,20 @@ git switch -c feat/geom
 ### 2. PR 전 확인
 
 ```bash
-python main.py
+python3 main.py
 ```
 
 **에러 없이 끝나기만 하면 된다.** 합격/불합격(g6 FAIL 등)은 상관없음 —
 중간에 죽지만 않으면 통과.
+
+> macOS와 최근 리눅스에는 `python` 이라는 이름이 없다. `python3` 로 부를 것.
+
+PR을 올리면 GitHub Actions가 같은 검사를 자동으로 돌린다(`.github/workflows/ci.yml`).
+로컬에서 잊고 넘어가도 PR 화면에 결과가 뜬다.
+
+이게 있는 이유는 **git 충돌로는 안 나타나는 고장**이 있기 때문이다. 각자 자기 파일만
+고치므로 충돌은 잘 안 나지만, 한쪽이 `constants.py` 값을 바꾸면 파일이 겹치지 않아도
+다른 모듈의 결과가 달라진다. 각자 로컬에서는 잘 돌고, 합쳐놓고 돌려야만 보인다.
 
 ### 3. 커밋
 

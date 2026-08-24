@@ -1,0 +1,29 @@
+# PR·푸시마다 파이프라인이 살아 있는지 자동으로 확인한다.
+#
+# 각자 자기 파일만 고치므로 git 충돌은 잘 안 난다. 정작 위험한 건 '의미 충돌'이다 —
+# 예를 들어 STRC가 슬라이서 계수를 실측값으로 바꾸면 WGHT의 수렴 강도가 달라지는데,
+# 파일이 달라 충돌도 안 나고 각자 python main.py도 잘 돈다. 합쳐놓고 돌려야만 보인다.
+# 그걸 사람이 기억해서 하는 대신 여기서 자동으로 한다.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # README 「PR 전 확인」의 그 조건 — 에러 없이 끝나기만 하면 된다.
+      # 합격/불합격(g6 FAIL 등)은 상관없다.
+      - name: 파이프라인 스모크
+        run: python main.py
+
+      - name: WGHT 검증 (16종)
+        run: python -m validation.wght.test_wght

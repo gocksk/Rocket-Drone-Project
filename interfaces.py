@@ -117,6 +117,11 @@ class WghtOut:
     converged: bool
     n_iter: int
     strc: StrcOut        # 수렴 시점의 구조 결과 (g10 포함)
+    # ↓ 수렴 진단 (WGHT §3). 기본값이 있어 기존 호출부는 그대로 동작한다.
+    status: str = "converged"   # converged / diverged_structural / diverged_numerical
+                                #  / limit_cycle / max_iter
+    S_hat: float = None         # 수렴점 근방의 dm_str/dMTOW. 1에 가까울수록 되먹임이 강하다
+    err: float = None           # 반환 MTOW의 오차 상한 [kg]. Ŝ>=1이면 None
 
 
 # ───────── PROP-B 출력 (PROP-B 가이드라인 §8) ─────────
