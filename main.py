@@ -16,8 +16,9 @@
 import constants as k
 from common.out import stdout_utf8
 from interfaces import (DesignVars, PreOut, RespPayload, Result, MassItem,
-                        FAIL_NONE, FAIL_G1, FAIL_G2, FAIL_G3,
+                        FAIL_NONE, FAIL_GEOM, FAIL_G1, FAIL_G2, FAIL_G3,
                         FAIL_G4_STRUCTURAL, FAIL_G4_NUMERICAL, FAIL_G4_MAXITER)
+from modules.geom import GeomInfeasible
 from modules import atm, geom, aero, prop, miss, strc, wght, stab, cost
 
 
@@ -60,9 +61,19 @@ def evaluate(dv: DesignVars) -> Result:
     r = Result()
 
     # ══ ⓪ 전처리 ══
-    r.pre = pre = preprocess(dv)
+    try:
+        r.pre = pre = preprocess(dv)
+    except GeomInfeasible as e:
+        # 형상이 성립하지 않는 설계점. g 를 새로 만들지 않고 사유 코드로만 전달한다.
+        # DOE 배치가 예외로 죽는 대신 한 줄의 탈락 기록으로 남는다.
+        r.diag["geom_reason"] = str(e)
+        return _fail(r, FAIL_GEOM, "⓪ GEOM.hull — 형상 불성립")
+
     r.g["g1"] = pre.pmap.g1
     r.diag["V_pitch"] = pre.pmap.V_pitch
+    # §2 하한 규칙 여유 — g1(판정)과 별개로 "표본이 규칙 안에 있었나"를 로그에 남긴다
+    r.diag["pd_min"] = prop.pd_prop_min(k.V_cr, pre.atm.a_snd)
+    r.diag["pd_margin"] = dv.pd_prop / r.diag["pd_min"]
     if r.g["g1"] < 0:
         # g1–g4 는 사이징 성립 조건이다. 위반하면 뒤를 계산하지 않는다 (§6.1).
         return _fail(r, FAIL_G1, "⓪ PROP.build_map — 순항 미성립")
@@ -221,7 +232,7 @@ if __name__ == "__main__":
     # 대표 설계점 — 범위가 전부 TBD 라 이 숫자들도 스모크 테스트용이다.
     dv = DesignVars(
         d_body=0.09, lambda_body=7.0, S_fin=0.036, x_fin=0.50, AR_fin=2.2,
-        f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.30, n_ser=6,
+        f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.50, n_ser=6,
         k_E=1.0, k_mot=1.0,
-    )
+    )   # pd_prop 은 §2 하한 규칙(prop.pd_prop_min ≈ 1.466)을 만족해야 한다
     report(evaluate(dv))

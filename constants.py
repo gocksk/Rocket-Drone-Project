@@ -58,7 +58,13 @@ U_cell_cut = 3.40         # TBD 방전 종지 셀 전압 (SOC 0) [V]
 # §3.3 추진
 # ════════════════════════════════════════════════════════════════════════
 eta_esc = 0.95            # ESC 효율
-M_tip_max = 0.70          # 허용 나선 팁 마하수 — g2
+M_tip_max = 0.70          # 허용 나선 팁 마하수 — g2. ICD §3.3 값 유지 (P3 검토 결과)
+# 피치속도 여유비 — ICD §2 `pd_prop` 하한 규칙의 계수. 원문 1.05 → 1.25 (P3 개정).
+#   V_pitch >= k_pitch_margin · V_cr   ⟺   pd_prop >= k_pitch_margin · J_cr
+# 1.05 는 순항 작동 전진비를 추력 0 전진비 J0 바로 밑에 붙여 놓아 CT 가 0.012 까지
+# 무너진다. 1.25 에서 CT=0.065 로 5.4 배. g1(§6.1)은 ICD 정의 그대로 두고,
+# 이 계수는 **DOE 표본을 뿌릴 범위**에만 쓴다.
+k_pitch_margin = 1.25     # ICD외(계수 개정) — docs/ICD0-008.md §2·§11-9
 pm_mot = 3.0              # TBD 모터 연속 비출력 [kW/kg] (이분법 초기 구간용, 대략값)
 k_mprop = 1.5             # TBD 프롭 질량 계수 — m_prop = k_mprop · d_prop³
 
@@ -66,8 +72,36 @@ k_mprop = 1.5             # TBD 프롭 질량 계수 — m_prop = k_mprop · d_p
 # TBD 전 계수 — 아래 형태 자체가 잠정이며 회귀 적합 후 형태까지 바뀔 수 있다.
 #   R_mot = a_R · m_mot^b_R · kv^c_R      [Ω]
 #   I0    = a_I0 · kv^b_I0                [A]
-a_R, b_R, c_R = 1.0e-2, -1.0, -1.0    # TBD
+# a_R 은 **회귀가 아니라 크기 맞춤**이다 — 소형 모터 1점(m=50 g, kv=2000 → R≈0.06 Ω)에
+# 자릿수만 맞춰 뒀다. 표본 3~5종을 모아 진짜 회귀로 교체할 때까지 값을 믿지 말 것.
+a_R, b_R, c_R = 6.0, -1.0, -1.0       # TBD
 a_I0, b_I0 = 1.0e-3, 1.0              # TBD
+
+# ── PROP BEMT 블레이드 규약 (ICD §5.1 은 "BEMT" 라고만 적었다) ──
+B_blade = 2               # ICD외 TBD 블레이드 수
+r_hub_ratio = 0.15        # ICD외 TBD 허브 반경비 r_hub/R
+c_over_D = 0.10           # ICD외 TBD 블레이드 코드비 c/D (등코드 전제)
+cl_alpha_2d = 5.7         # ICD외 익형 2D 양력기울기 [1/rad]
+cl_max_2d = 1.2           # ICD외 TBD 실속 한계
+cd0_2d = 0.020            # ICD외 TBD 익형 최소 항력계수
+k_cd_2d = 0.020           # ICD외 TBD 익형 항력 극선 계수 (cd = cd0 + k·cl²)
+
+# ── PROP 수치 ──
+n_bemt_elem = 24          # ICD외 BEMT 반경 요소 수
+n_bemt_iter = 300         # ICD외 BEMT 유도속도 반복 상한
+eps_bemt = 1e-10          # ICD외 BEMT 수렴 허용오차 (팁속도 대비 상대)
+relax_bemt = 0.3          # ICD외 BEMT 완화계수
+J_map_max = 2.4           # ICD외 CT/CP 테이블 J 상한
+n_J_grid = 49             # ICD외 CT/CP 테이블 격자 수
+
+# ── PROP 트림 (§4.1) ──
+eps_trim = 1e-10          # ICD외 트림 잔차 허용 (무게 대비 상대)
+N_trim_max = 40           # ICD외 트림 뉴턴 반복 상한
+dtheta_max = math.radians(15.0)   # ICD외 뉴턴 스텝 제한 [rad]
+theta_lo = math.radians(-20.0)    # ICD외 자세각 하한 (양력 과잉 → 기수 숙임)
+theta_hi = math.radians(89.0)     # ICD외 자세각 상한 (호버는 별도 경로)
+kv_lo, kv_hi = 50.0, 20000.0      # ICD외 kv 근찾기 구간 [rpm/V]
+N_bisect_max = 80         # ICD외 1차원 이분법 반복 상한
 
 # ════════════════════════════════════════════════════════════════════════
 # §3.4 열
@@ -143,3 +177,28 @@ N_ref = 1                 # ICD외 TBD 앵커의 로터 수 기준 — 미확인
 
 d_clr = 0.010             # ICD외 TBD 프롭 클리어런스 안전여유 [m] — g7
 k_esc_margin = 1.3        # ICD외 TBD ESC 정격 마진 [-] — COST
+
+# ── GEOM 형상 규약 (ICD §5.1 은 계산식만 적고 형상 계수는 안 적었다) ──
+f_nose = 3.0              # ICD외 TBD 노즈 세장비 l_nose/d_body [-]
+k_nose = 0.75             # ICD외 TBD 노즈 젖음면적 계수 (원뿔 π·d·l/2 와 원통 사이) [-]
+lam_fin = 0.5             # ICD외 TBD 핀 테이퍼비 λ = c_tip/c_root [-]
+tc_fin = 0.12             # ICD외 TBD 핀 두께비 t/c [-] — STRC 와 공동 확정
+k_thk = 1.03              # ICD외 TBD 핀 젖음면적 두께 할증 [-]
+
+# ── AERO 항력 빌드업 (ICD §5.1 은 성분 목록만 적었다) ──
+k_base = 0.18             # ICD외 TBD 기저 항력계수 (S_ref 기준) [-]
+k_int = 0.10              # ICD외 TBD 핀-동체 접합부 간섭 계수 [-]
+k_cal = 1.0               # ICD외 TBD 항력 앵커 보정 [-] — 실측 전까지 1.0
+M_pg_max = 0.85           # ICD외 Prandtl-Glauert 보정의 마하 상한 (β→0 발산 방지)
+k_form = 1.05             # ICD외 TBD 포드 젖음면적 형상 할증 [-]
+
+# ── AERO 고받음각 (크로스플로) ──
+Cd_c = 1.2                # ICD외 TBD 원통 크로스플로 항력계수 [-]
+eta_cf = 0.65             # ICD외 TBD 유한길이 크로스플로 효율 [-]
+k_side = 0.67             # ICD외 TBD 노즈 측면 투영 형상계수 [-]
+k_xn = 0.6                # ICD외 TBD 노즈 측면 투영 도심 위치 (l_nose 대비) [-]
+k_finproj = 0.7           # ICD외 TBD 핀 측면 투영 유효 비율 [-]
+
+# ── AERO Barrowman ──
+CN_nose = 2.0             # ICD외 노즈 법선력 기울기 [1/rad] — Barrowman 표준값 (기저 d_body)
+k_cp_nose = 0.466         # ICD외 TBD 노즈 압력중심 위치 (l_nose 대비) [-] — 오자이브 기준

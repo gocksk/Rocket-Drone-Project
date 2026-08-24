@@ -3,10 +3,11 @@
 실행: python3 -m validation.wght.test_wght   (저장소 루트에서)
 
 [검증 전략]
-WGHT 는 C-2 에서 수천 후보에 반복 사용될 코드다. 그런데 실제 STRC 는 슬라이서 계수가
-실측 대기라 '정답'을 모르므로, 정답을 아는 가짜 STRC(선형 스텁)와 대조한다.
+WGHT 는 C-2 에서 수천 후보에 반복 사용될 코드다. 그런데 실제 응답 질량(구조·모터·
+배터리)은 계수가 실측 대기라 '정답'을 모르므로, 정답을 아는 가짜 응답 모델(선형 스텁)과
+대조한다.
 
-선형 스텁 m_str = S·MTOW 는 셋을 해석적으로 안다:
+선형 스텁 W_str = S·MTOW 는 셋을 해석적으로 안다:
   · 고정점    MTOW* = m_fixed/(1-S)
   · 발산 경계 정확히 S = 1 (beta 와 무관)
   · Ŝ 는 beta 를 어떻게 잡든 S 를 복원해야 한다
@@ -14,41 +15,42 @@ WGHT 는 C-2 에서 수천 후보에 반복 사용될 코드다. 그런데 실�
 숫자가 이론과 다르면 "경계가 그 값이다"가 아니라 "우리 코드에 버그가 있다"가 정답이다.
 
 테스트 1~12·14·15 는 _iterate() 를 직접 겨눈다 (스텁 주입).
-테스트 3·13·16 은 converge() 를 실제 파이프라인으로 겨눈다 (질량 특성·항등식).
+테스트 3·13·16 은 실제 파이프라인 main.evaluate() 를 겨눈다 (질량 특성·항등식).
+
+[ICD0-008 이식 — 바뀐 것은 배선뿐이다]
+  · 주입 함수 : strc_of(MTOW) -> StrcOut  →  resp_of(MTOW) -> (응답질량_합, payload)
+  · 전처리    : 이 파일의 pipeline() 헬퍼를 없애고 main.preprocess() 를 부른다 (§8 C-1)
+  · 질량 특성 : converge() 가 아니라 wght.mass_props() 가 낸다 (배치가 ②라서)
+assert 내용은 하나도 바뀌지 않았다.
 """
 import math
 import sys
 
 import constants as k
+import main
 from interfaces import DesignVars
-from common import srl
-from modules import geom, aero, prop_a, strc
-from modules.wght import _iterate, converge
+from modules import strc
+from modules.wght import _iterate
 from validation.wght.strc_stub import (make_linear_strc, make_power_strc,
                                        make_quantized_strc, make_impure_strc)
 
 M_FIXED = 5.0          # 임의의 고정 질량 [kg] — 값 자체는 결과에 영향이 없다
 
+# 실제 파이프라인용 대표 설계점 — 범위가 전부 TBD 라 이 숫자들도 스모크용이다.
+BASE_DV = dict(d_body=0.09, lambda_body=7.0, S_fin=0.036, x_fin=0.50, AR_fin=2.2,
+               f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.50, n_ser=6,
+               k_E=1.0, k_mot=1.0)
 
-def run(strc_of, **opts):
+
+def run(resp_of, **opts):
     """스텁을 _iterate 에 물린다. 초기값은 실제 converge() 와 같은 규칙."""
-    return _iterate(k.k_init * M_FIXED, M_FIXED, strc_of, opts or None)
+    return _iterate(k.k_init * M_FIXED, M_FIXED, resp_of, opts or None)
 
 
-def pipeline(**over):
-    """실제 파이프라인 앞단 — converge() 호출에 필요한 것을 만든다."""
-    base = dict(d_body=0.09, lambda_body=7.0, S_fin=0.036, x_fin=0.50, AR_fin=2.2,
-                f_mount=0.8, n_design=4.0, kv_mot=2000.0, d_stat=0.028, h_stat=0.008,
-                d_prop=0.13, pd_prop=1.30, E_batt=80.0, n_ser=6)
-    base.update(over)
-    dv = DesignVars(**base)
-    parts = {"motor": srl.motor(dv.kv_mot, dv.d_stat, dv.h_stat),
-             "prop": srl.prop(dv.d_prop, dv.pd_prop),
-             "esc": srl.esc(40.0), "batt": srl.batt(dv.E_batt, dv.n_ser)}
-    g = geom.run(dv, parts)
-    a = aero.run(dv, g)
-    pa = prop_a.run(dv, parts, a.F_drag)
-    return dv, g, a, pa
+def sizing(**over):
+    """실제 파이프라인 한 바퀴 — ⓪ 전처리는 main 이 단일 출처다 (§8 C-1)."""
+    dv = DesignVars(**{**BASE_DV, **over})
+    return dv, main.evaluate(dv)
 
 
 def check(cond, msg):
@@ -101,14 +103,14 @@ def test_2_beta_invariance():
 
 def test_3_sum_identity():
     banner(3, "항등식 — MTOW == Σbreakdown (실제 파이프라인)")
-    dv, g, a, pa = pipeline()
-    r = converge(dv, g, a, pa.m_propsys)
-    total = sum(i.m for i in r.breakdown)
-    d = abs(total - r.MTOW)
-    print(f"  MTOW={r.MTOW:.12f}  Σbreakdown={total:.12f}")
-    print(f"  |차이| = {d:.3e}   항목 {len(r.breakdown)}개")
+    dv, res = sizing()
+    bd = res.mass.breakdown
+    total = sum(i.m for i in bd)
+    d = abs(total - res.wght.MTOW)
+    print(f"  MTOW={res.wght.MTOW:.12f}  Σbreakdown={total:.12f}")
+    print(f"  |차이| = {d:.3e}   항목 {len(bd)}개")
     # 부동소수 합산 순서 차이만 허용. 항등식이므로 이 이상 벌어지면 안 된다.
-    check(d <= 1e-12 * max(1.0, r.MTOW), f"항등식이 깨짐 ({d:.3e})")
+    check(d <= 1e-12 * max(1.0, res.wght.MTOW), f"항등식이 깨짐 ({d:.3e})")
     print("  PASS")
 
 
@@ -176,7 +178,7 @@ def test_7_limit_cycle():
         print(f"  quantum={q} beta={beta}: status={r['status']}  n_iter={r['n_iter']}  "
               f"err={r['err']:.4e}")
 
-        # 핵심: 중점을 반환하면 어떤 STRC 호출 결과와도 같지 않아 합성값이 된다.
+        # 핵심: 중점을 반환하면 어떤 응답 모델 호출 결과와도 같지 않아 합성값이 된다.
         # 반환값이 실제 이력에 있던 반복의 raw 중 하나인지로 확인한다.
         raws = [h[1] for h in r['history']]
         check(any(abs(r['MTOW'] - x) <= 1e-12 * r['MTOW'] for x in raws),
@@ -188,9 +190,9 @@ def test_7_limit_cycle():
         check(r['err'] is not None and r['err'] >= 0, f"q={q}: err 이 음수/None")
         check(abs(r['err'] - gap / 2) <= 1e-12 * max(1.0, gap), f"q={q}: err != 양자/2")
 
-        # 반환된 StrcOut 이 채택한 분기의 것인지 — m_str 이 raw 와 정합해야 한다
-        check(abs((M_FIXED + r['strc'].m_str) - r['MTOW']) <= 1e-12 * r['MTOW'],
-              f"q={q}: 반환 StrcOut 이 채택 분기의 것이 아니다")
+        # 반환된 payload 가 채택한 분기의 것인지 — W_str 이 raw 와 정합해야 한다
+        check(abs((M_FIXED + r['payload'].W_str) - r['MTOW']) <= 1e-12 * r['MTOW'],
+              f"q={q}: 반환 payload 가 채택 분기의 것이 아니다")
     check(found, "리밋 사이클을 한 번도 재현하지 못했다 — 스윕 격자를 넓혀야 한다")
     print("  → err=0 이 나와도 버그가 아니다: 두 분기가 같은 raw 를 주면 그 값이 정확한 고정점이다")
     print("  PASS")
@@ -208,7 +210,7 @@ def test_8_quantization_at_ship_setting():
         check(r['status'] == 'converged',
               f"q={q}: beta<=1 에서는 수렴해야 한다 (사이클은 beta>1 에서만) — {r['status']}")
     print("  → limit_cycle 기계는 출하 설정용이 아니라 보험이다.")
-    print("    다만 m_str 이 국소적으로 비단조인 회귀식이면 beta<=1 에서도 가능하므로 유지한다")
+    print("    다만 W_str 이 국소적으로 비단조인 회귀식이면 beta<=1 에서도 가능하므로 유지한다")
     print("  PASS")
 
 
@@ -239,11 +241,11 @@ def test_10_max_iter_reports_err():
 def test_11_purity():
     banner(11, "주입 함수의 무상태성 — 이게 깨지면 배치에서 설계점이 서로 오염된다")
     # (a) 실제 modules.strc.run 이 순수한가 — 같은 MTOW 두 번이 같은 답을 줘야 한다
-    dv, g, a, _ = pipeline()
-    fixed = strc.fixed_masses(dv, g)
-    m1 = strc.run(dv, g, a.q_cr, a.CN_alpha_fin, 1.5, fixed).m_str
-    m2 = strc.run(dv, g, a.q_cr, a.CN_alpha_fin, 1.5, fixed).m_str
-    print(f"  실제 STRC: m_str(1.5) 두 번 → {m1:.12f} / {m2:.12f}")
+    dv = DesignVars(**BASE_DV)
+    pre = main.preprocess(dv)
+    m1 = strc.run(dv, pre.hull, pre.aero, 1.5).W_str
+    m2 = strc.run(dv, pre.hull, pre.aero, 1.5).W_str
+    print(f"  실제 STRC: W_str(1.5) 두 번 → {m1:.12f} / {m2:.12f}")
     check(m1 == m2, "modules.strc.run 이 상태를 들고 있다 — 배치에서 오염된다")
 
     # (b) 상태를 든 스텁은 결과를 바꿔야 한다 (테스트 자체가 유효한지 확인)
@@ -275,32 +277,32 @@ def test_12_exceptions():
 
 def test_13_mass_properties():
     banner(13, "질량 특성 — 3축 관성이 배치를 반영하는가")
-    dv, g, a, pa = pipeline(f_mount=0.4)
-    r = converge(dv, g, a, pa.m_propsys)
+    dv, res = sizing(f_mount=0.4)
+    mp = res.mass
 
     # (a) x_cg 는 breakdown 의 가중평균이어야 한다 (다른 경로로 계산하고 있지 않은지)
-    m_tot = sum(i.m for i in r.breakdown)
-    x_ref = sum(i.m * i.x for i in r.breakdown) / m_tot
-    print(f"  (a) x_cg={r.x_cg:.9f}  가중평균={x_ref:.9f}")
-    check(abs(r.x_cg - x_ref) < 1e-12, "x_cg 가 breakdown 의 가중평균이 아니다")
+    m_tot = sum(i.m for i in mp.breakdown)
+    x_ref = sum(i.m * i.x for i in mp.breakdown) / m_tot
+    print(f"  (a) x_cg={mp.x_cg:.9f}  가중평균={x_ref:.9f}")
+    check(abs(mp.x_cg - x_ref) < 1e-12, "x_cg 가 breakdown 의 가중평균이 아니다")
 
     # (b) 축대칭 전제 → J_yy == J_zz
-    print(f"  (b) J_yy={r.J_yy * 1e3:.4f} g·m²  J_zz={r.J_zz * 1e3:.4f} g·m²")
-    check(r.J_yy == r.J_zz, "축대칭 전제인데 J_yy != J_zz")
+    print(f"  (b) J_yy={mp.J_yy * 1e3:.4f} g·m²  J_zz={mp.J_zz * 1e3:.4f} g·m²")
+    check(mp.J_yy == mp.J_zz, "축대칭 전제인데 J_yy != J_zz")
 
     # (c) 로터 암을 늘리면 J_xx 가 커져야 한다. 안 변하면 반경 r 을 안 쓰는 것이고,
     #     그러면 롤 관성이 계통적으로 과소평가된다.
-    #     arm_rotor = r_body + f_mount·b_1 이므로 f_mount(포드의 스팬 방향 결합 위치)를
+    #     arm_rotor 는 f_mount(포드의 스팬 방향 결합 위치)의 함수이므로
     #     루트쪽 0.4 에서 팁쪽 1.0 으로 옮겨 암을 늘린다.
-    dv2, g2, a2, pa2 = pipeline(f_mount=1.0)
-    r2 = converge(dv2, g2, a2, pa2.m_propsys)
-    print(f"  (c) arm_rotor {g.arm_rotor:.4f} → {g2.arm_rotor:.4f} m  "
-          f"J_xx {r.J_xx * 1e3:.3f} → {r2.J_xx * 1e3:.3f} g·m²")
-    check(g2.arm_rotor > g.arm_rotor, "테스트 전제 불성립: arm_rotor 가 안 커졌다")
-    check(r2.J_xx > r.J_xx, "arm_rotor 를 늘렸는데 J_xx 가 안 커진다 — 반경 r 미반영")
+    dv2, res2 = sizing(f_mount=1.0)
+    print(f"  (c) arm_rotor {res.layout.arm_rotor:.4f} → {res2.layout.arm_rotor:.4f} m  "
+          f"J_xx {mp.J_xx * 1e3:.3f} → {res2.mass.J_xx * 1e3:.3f} g·m²")
+    check(res2.layout.arm_rotor > res.layout.arm_rotor,
+          "테스트 전제 불성립: arm_rotor 가 안 커졌다")
+    check(res2.mass.J_xx > mp.J_xx, "arm_rotor 를 늘렸는데 J_xx 가 안 커진다 — 반경 r 미반영")
 
     # (d) 모든 관성은 양수여야 한다
-    check(r.J_xx > 0 and r.J_yy > 0 and r.J_zz > 0, "관성이 0 이하")
+    check(mp.J_xx > 0 and mp.J_yy > 0 and mp.J_zz > 0, "관성이 0 이하")
     print("  PASS")
 
 
@@ -318,13 +320,13 @@ def test_14_output_shape():
     print(f"  beta=2.0 의 resid 부호 집합 = {signs}")
     check(len(signs) > 1, "과완화인데 resid 부호가 한 종류 — 절댓값으로 저장하고 있다")
 
-    for key in ['MTOW', 'strc', 'status', 'S_hat', 'err', 'n_iter', 'history']:
+    for key in ['MTOW', 'payload', 'status', 'S_hat', 'err', 'n_iter', 'history']:
         check(key in r, f"출력 키 누락: {key}")
     print(f"  반환 키 7종 전부 존재")
 
-    # 반환 MTOW 는 '완화된 반복값'이 아니라 마지막 STRC 호출의 합이어야 한다
-    check(abs((M_FIXED + r['strc'].m_str) - r['MTOW']) <= 1e-12 * r['MTOW'],
-          "반환 MTOW 가 마지막 STRC 호출과 정합하지 않는다")
+    # 반환 MTOW 는 '완화된 반복값'이 아니라 마지막 응답 모델 호출의 합이어야 한다
+    check(abs((M_FIXED + r['payload'].W_str) - r['MTOW']) <= 1e-12 * r['MTOW'],
+          "반환 MTOW 가 마지막 응답 모델 호출과 정합하지 않는다")
     print("  PASS")
 
 
@@ -344,12 +346,11 @@ def test_15_statelessness():
 
 
 def test_16_avio_list_coverage():
-    banner(16, "[회귀] SRL 항전 목록이 늘어도 질량이 사라지지 않는다")
-    # breakdown 의 항전 분류는 품목명 4종을 하드코딩한다. 목록에 품목이 늘면
+    banner(16, "[회귀] 항전 목록이 늘어도 질량이 사라지지 않는다")
+    # breakdown 의 항전 분류가 품목명을 하드코딩하면, 목록에 품목이 늘 때
     # m_fixed 에는 반영되는데 breakdown 에는 안 들어가고, 반환 MTOW 가 곧
-    # Σbreakdown 이므로 그 차액이 예외도 경고도 없이 사라졌다.
-    dv, g, a, pa = pipeline()
-    orig = srl.avio
+    # Σbreakdown 이므로 그 차액이 예외도 경고도 없이 사라진다.
+    orig = k.AVIO_LIST
     try:
         for label, extra in [
             ("기존 4종", []),
@@ -357,17 +358,19 @@ def test_16_avio_list_coverage():
             ("RTK + BEC 추가", [("rtk_rover", 0.030, 0.05, 0.03, 0.01, 300000.0),
                                 ("bec", 0.015, 0.03, 0.02, 0.01, 20000.0)]),
         ]:
-            srl.avio = lambda e=extra: orig() + e
-            r = converge(dv, g, a, pa.m_propsys)
-            m_batt = dv.E_batt / k.e_spec
-            want = (pa.m_propsys + m_batt + k.k_pack * m_batt
-                    + sum(x[1] for x in srl.avio()) + r.strc.m_str)
-            d = r.MTOW - want
-            print(f"  {label:16s} MTOW={r.MTOW:.9f}  기대={want:.9f}  차이={d * 1000:+.4f} g")
+            k.AVIO_LIST = orig + extra
+            dv, res = sizing()
+            pl = res.wght.payload
+            want = (k.W_pl + sum(x[1] for x in k.AVIO_LIST)
+                    + k.N_rot * res.pre.pmap.m_prop
+                    + k.N_rot * pl.m_mot + pl.m_batt + pl.m_pack + pl.W_str)
+            d = res.wght.MTOW - want
+            print(f"  {label:16s} MTOW={res.wght.MTOW:.9f}  기대={want:.9f}  "
+                  f"차이={d * 1000:+.4f} g")
             check(abs(d) <= 1e-9 * max(1.0, want),
                   f"{label}: 질량 {d * 1000:+.3f} g 가 사라졌다")
     finally:
-        srl.avio = orig
+        k.AVIO_LIST = orig
     print("  PASS")
 
 

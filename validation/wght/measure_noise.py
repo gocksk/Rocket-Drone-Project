@@ -20,25 +20,29 @@ m_str 의 응답을 보면 두 가지가 한 번에 나온다:
 (k_sl_*)가 들어오면 계단형일 수 있으므로, 계수가 실측으로 교체되면 반드시 다시 잰다.
 
 표준 라이브러리만 쓴다 — 파이프라인에 없는 의존성을 검증 자산이 끌어들이지 않는다.
+
+⚠ ICD0-008 §8 C-4 미완 — 측정 대상이 구조 무게에서 **전체 응답 질량**(구조+모터+
+  배터리)으로 넓어져야 하는데, 지금은 PROP·MISS 가 스텁이라 구조 항만 잰다.
+  P4·P5 가 끝나고 dt_miss 가 확정되면 resp_of 전체를 물려 다시 재야 한다.
 """
 import math
 
 import constants as k
+import main
 from interfaces import DesignVars
-from common import srl
-from modules import geom, aero, prop_a, strc
+from modules import strc
 from validation.wght.strc_stub import (make_linear_strc, make_quantized_strc,
                                        make_power_strc, make_noisy_strc)
 
 
-def probe(strc_of, MTOW_center, rel_window=1e-3, n=401):
-    """MTOW_center 주변 ±rel_window 를 n 점으로 훑어 m_str 응답을 얻는다.
+def probe(resp_of, MTOW_center, rel_window=1e-3, n=401):
+    """MTOW_center 주변 ±rel_window 를 n 점으로 훑어 응답 질량을 얻는다.
 
     창을 좁게(기본 0.1%) 잡는 이유: 넓으면 모델의 '진짜 기울기'가 섞여 들어와
     노이즈와 구분되지 않는다. 수렴 근방에서 반복이 실제로 움직이는 폭이 이 정도다.
     """
     xs = [MTOW_center * (1.0 + rel_window * (2.0 * i / (n - 1) - 1.0)) for i in range(n)]
-    ys = [strc_of(x).m_str for x in xs]
+    ys = [resp_of(x)[0] for x in xs]
     return xs, ys
 
 
@@ -75,7 +79,7 @@ def measure_noise(xs, ys):
     return math.sqrt(sum((r - mr) ** 2 for r in res) / n), slope
 
 
-def measure(strc_of, MTOW_center, name='', rel_window=1e-3, n=401, k_sigma=3.0,
+def measure(resp_of, MTOW_center, name='', rel_window=1e-3, n=401, k_sigma=3.0,
             max_widen=8):
     """한 모델에 대한 전체 측정. resid_floor 권고값까지 낸다.
 
@@ -85,7 +89,7 @@ def measure(strc_of, MTOW_center, name='', rel_window=1e-3, n=401, k_sigma=3.0,
     """
     widened = 0
     while True:
-        xs, ys = probe(strc_of, MTOW_center, rel_window, n)
+        xs, ys = probe(resp_of, MTOW_center, rel_window, n)
         quantum, n_uniq = measure_quantum(ys)
         if n_uniq >= 2 or widened >= max_widen:
             break
@@ -107,22 +111,22 @@ def measure(strc_of, MTOW_center, name='', rel_window=1e-3, n=401, k_sigma=3.0,
 
 
 def real_strc_case():
-    """실제 modules/strc.py 를 측정 대상으로 만든다 — 이게 이 도구의 본래 용도다."""
+    """실제 modules/strc.py 를 측정 대상으로 만든다 — 이게 이 도구의 본래 용도다.
+
+    ⓪ 전처리는 main.preprocess() 하나만 부른다 (§8 C-1 단일 출처).
+    ⚠ 응답 질량 중 구조 항만 물린다 — 모터·배터리는 아직 스텁이다 (§8 C-4 미완).
+    """
     dv = DesignVars(d_body=0.09, lambda_body=7.0, S_fin=0.036, x_fin=0.50, AR_fin=2.2,
-                    f_mount=0.8, n_design=4.0, kv_mot=2000.0, d_stat=0.028, h_stat=0.008,
-                    d_prop=0.13, pd_prop=1.30, E_batt=80.0, n_ser=6)
-    parts = {"motor": srl.motor(dv.kv_mot, dv.d_stat, dv.h_stat),
-             "prop": srl.prop(dv.d_prop, dv.pd_prop),
-             "esc": srl.esc(40.0), "batt": srl.batt(dv.E_batt, dv.n_ser)}
-    g = geom.run(dv, parts)
-    a = aero.run(dv, g)
-    pa = prop_a.run(dv, parts, a.F_drag)
-    fixed = strc.fixed_masses(dv, g)
-    m_batt = dv.E_batt / k.e_spec
-    m_fixed = (pa.m_propsys + m_batt + k.k_pack * m_batt
-               + sum(x[1] for x in srl.avio()))
-    strc_of = lambda M: strc.run(dv, g, a.q_cr, a.CN_alpha_fin, M, fixed)
-    return strc_of, m_fixed
+                    f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.50, n_ser=6,
+                    k_E=1.0, k_mot=1.0)
+    pre = main.preprocess(dv)
+    m_fixed = k.W_pl + sum(x[1] for x in k.AVIO_LIST) + k.N_rot * pre.pmap.m_prop
+
+    def resp_of(M):
+        st = strc.run(dv, pre.hull, pre.aero, M)
+        return st.W_str, st
+
+    return resp_of, m_fixed
 
 
 def _report(rows):
@@ -150,11 +154,11 @@ if __name__ == '__main__':
     print("=" * 88)
 
     # (1) 실제 STRC — 지금 상태의 modules/strc.py 를 그대로 잰다
-    strc_of, m_fixed = real_strc_case()
+    resp_of, m_fixed = real_strc_case()
     from modules.wght import _iterate
-    M_star = _iterate(k.k_init * m_fixed, m_fixed, strc_of)['MTOW']
+    M_star = _iterate(k.k_init * m_fixed, m_fixed, resp_of)['MTOW']
     print(f"\n[1] 실제 modules/strc.py  (수렴점 MTOW = {M_star:.6f} kg)")
-    _report([measure(strc_of, M_star, '실제 STRC (현재)')])
+    _report([measure(resp_of, M_star, '실제 STRC (현재)')])
     print("  → 지금은 슬라이서 계수가 상수라 매끄럽다. k_sl_* 가 회귀 테이블로")
     print("    교체되면 계단형이 될 수 있으므로 그때 이 줄을 다시 재야 한다.")
 
