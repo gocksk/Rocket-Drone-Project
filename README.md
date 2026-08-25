@@ -182,6 +182,7 @@ C3이 1등인 이유: 300 km/h 달성은 사이징이 보장하므로, 그 위�
 
 ```
 Rocket-Drone-Project/
+├── DOE 런처.bat                  더블클릭 → DOE 런처 창 (Windows)
 ├── README.md                     이 파일
 ├── STUBS.md                      미구현·미확정 목록 ★ 뭘 믿을지 판단하려면 여기부터
 ├── constants.py                  모든 상수 (151개)
@@ -270,6 +271,11 @@ python -m modules.atm && python -m modules.geom && python -m modules.aero && pyt
 실행·로그·재개만 책임집니다. 사이징 경로는 한 줄도 다르지 않습니다.
 
 ### 창으로 돌리기
+
+저장소 맨 위의 **`DOE 런처.bat`을 더블클릭**하면 창이 뜹니다 (Windows).
+콘솔 창은 안 뜨고, 파이썬이나 `tkinter`가 없으면 **왜 못 떴는지**를 찍고 멈춥니다.
+
+터미널에서는 같은 것을 이렇게 부릅니다.
 
 ```bash
 python -m doe.gui
