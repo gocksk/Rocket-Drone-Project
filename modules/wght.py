@@ -199,27 +199,49 @@ def growth_split(history: list, resp_parts_of) -> dict:
       계단형이라(로컬 개정 11-39) 국소 미분은 0 이거나 무한대로 나온다. 유한한
       구간에 걸친 기울기를 봐야 의미가 있다.
 
+    ⚠ 폭(h_split)은 계단 간격보다 커야 한다. w_fill 계단 간격이 MTOW 의 약 11 %
+      (0.14/1.29) 라 좌우 ±5 % = 전체 10 % 로 잡았다 — 11-45 표의 ±5 % 열과 같다.
+      그보다 좁으면 구조 항이 계단 안에 갇혀 0 에 가깝게 나온다.
+      [11-45 의 '어느 폭을 표준으로 쓸지는 미정' 을 확정한 것]
+
     ⚠ resp_parts_of 를 2회 더 호출한다 — 설계점당 비용이 그만큼 늘어난다.
       DOE 배치에서 부담되면 None 을 넘겨 끈다.
 
     [P7 에서 구현] 수렴 상태머신(_iterate·converge)은 건드리지 않았다.
     """
-    if resp_parts_of is None or len(history) < 2:
+    # 이력에서 '두 점'을 고르지 않으므로 마지막 한 점만 있으면 된다. 예전에는
+    # len<2 를 막았는데, 그러면 하한 가드로 1회 만에 끝난 설계점에서 분해가 통째로
+    # None 이 됐다 — 그 설계점도 수렴점은 있으므로 잴 수 있다.
+    if resp_parts_of is None or not history:
         return {"struct": None, "motor": None, "batt": None}
 
-    # 이력의 인접 두 점을 쓴다. 다만 수렴 근처에서는 점들이 뭉쳐 있어 차분이 잡음에
-    # 묻히므로, 뒤에서부터 충분히 벌어진 짝을 찾는다.
-    M_b = history[-1][0]
-    M_a = None
-    for M, _, _ in reversed(history[:-1]):
-        if abs(M - M_b) > k.h_split_min * max(abs(M_b), 1e-12):
-            M_a = M
-            break
-    if M_a is None:
-        M_a = M_b * (1.0 - k.h_split)      # 이력이 전부 뭉쳐 있다 — 의도적으로 벌린다
+    # 이력의 점을 쓰지 않는다. 수렴 근처에서 반복은 계단 하나 안에서 뭉치기 때문이다
+    # — 실측으로 마지막 두 점 간격이 0.68 g 인데 w_fill 계단 간격은 140 g 이었다(11-39).
+    # 계단 안에서 잰 기울기는 구조 항을 통째로 과소평가한다(11-45: ±1 % → ±5 % 에서 13 배).
+    # 그래서 이력과 무관하게 수렴점 좌우로 h_split 만큼 벌린 할선을 쓴다.
+    #
+    # 한쪽(아래)만 보지 않는 이유: 모터·배터리 응답이 수렴점 위아래로 비대칭이다.
+    # 실측 motor S_i 가 [0.90,1.00] 에서 0.001150, [1.00,1.10] 에서 0.001434 로 25 % 다르다.
+    # 아래쪽만 보면 그만큼 과소평가한다. 구조는 어느 쪽이든 0.00751~0.00760 로 안정적이다.
+    M_c = history[-1][0]
+    h = k.h_split
+    if M_c <= 0.0 or h <= 0.0:
+        return {"struct": None, "motor": None, "batt": None}
 
-    pa, pb = resp_parts_of(M_a), resp_parts_of(M_b)
-    dM = M_b - M_a
+    try:
+        pa, pb = resp_parts_of(M_c * (1.0 - h)), resp_parts_of(M_c * (1.0 + h))
+        dM = 2.0 * h * M_c
+    except Exception:
+        # 위쪽에서 사이징이 성립하지 않는 설계점이 있을 수 있다(모터가 열·팁마하에
+        # 걸리는 영역). 진단값 때문에 본 계산을 죽일 수는 없으므로 아래쪽 단측으로
+        # 물러선다 — 예외 종류를 좁히지 않는 것은 주입 함수가 무엇을 던질지
+        # WGHT 가 알 수 없기 때문이다.
+        try:
+            pa, pb = resp_parts_of(M_c * (1.0 - h)), resp_parts_of(M_c)
+            dM = h * M_c
+        except Exception:
+            return {"struct": None, "motor": None, "batt": None}
+
     if abs(dM) < 1e-15:
         return {"struct": None, "motor": None, "batt": None}
     return {key: (pb[key] - pa[key]) / dM for key in pa}
