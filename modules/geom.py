@@ -76,32 +76,110 @@ def hull(dv: DesignVars) -> HullOut:
     )
 
 
+def wall_thickness(dv: DesignVars) -> float:
+    """벽두께 [m] — 하중배수에 비례해 두꺼워진다.
+
+    ⚠ 원래 STRC 소관이다. 배치가 내부 지름을 알아야 해서 임시로 여기 둔다.
+      P6 에서 STRC 가 진짜 벽두께를 내면 그쪽에서 받아온다. [확정 필요]
+    """
+    return k.t_0 + k.k_t * (dv.n_design - k.n_ref_load)
+
+
+def d_internal(dv: DesignVars, hl: HullOut) -> float:
+    """동체 내부 지름 [m]."""
+    return dv.d_body - 2.0 * wall_thickness(dv)
+
+
+def box_from_volume(vol: float, d_int: float) -> tuple:
+    """부피 → (L, W, H). 단면은 내부 원에 **내접**하는 W:H = wh_pack 직사각형.
+
+        W² + H² = d_int² ,  W = wh_pack·H   →   H = d_int/√(wh_pack²+1)
+
+    내접 = 기하학적 최대다. 즉 단면을 가장 크게 잡아 길이 L 을 가장 짧게 만든다.
+    그래서 g6(길이 여유)이 **낙관적**이다 — 실제로는 배선·완충재가 들어가므로
+    충전율 계수가 필요하다. 계수를 지어내지 않고 낙관적인 쪽으로 두되 여기 적어 둔다.
+    """
+    H = d_int / math.sqrt(k.wh_pack ** 2 + 1.0)
+    W = k.wh_pack * H
+    return vol / max(W * H, 1e-12), W, H
+
+
+def pod(m_mot: float, D_mot: float, L_mot: float, hl: HullOut,
+        dv: DesignVars) -> tuple:
+    """모터 포드 기하 → (d_pod, l_pod, x_pod, x_prop).
+
+    포드는 핀에 결합된다. 축방향 위치는 핀 루트 코드의 f_pod_c 지점.
+    모터 치수는 호출부가 넘긴다 — GEOM 이 THRM 을 부르면 새 모듈 간 호출이 된다 (§5).
+    """
+    d_pod = D_mot + 2.0 * k.t_pod
+    l_pod = max(k.f_pod * d_pod, L_mot + 2.0 * k.t_pod)
+    x_pod = dv.x_fin + k.f_pod_c * hl.c_root
+    x_prop = x_pod + 0.5 * l_pod + k.d_hub
+    return d_pod, l_pod, x_pod, x_prop
+
+
 def layout(dv: DesignVars, hl: HullOut, dims: dict) -> LayoutOut:
     """② 부품 배치 — 사이징 후 확정된 치수를 받아 기수부터 쌓는다.
 
-    dims : {부품명: (L, W, H)} — 배터리·모터는 부피 = 질량/rho_* 로 환산해 온다.
+    dims : {부품명: (L, W, H)} [m]. 밀도로 환산된 부피는 호출부가 box_from_volume 으로
+           상자를 만들어 넘긴다. 여기 없는 이름은 건너뛴다.
 
-    [스텁] 구현 예정 (P6):
-        배치 규칙 순서 — 카메라 → 센서 → 배터리 → FC/ESC
-        arm_rotor = r_body + f_mount · b_fin (포드가 핀에 결합)
+    ⚠ MTOW 를 되먹임 입력으로 참조하지 않는다 — 이건 ②다 (ICD §9 원칙 반려).
+      부품 치수는 ① 이 이미 확정한 값으로 들어온다.
     """
-    return LayoutOut(
-        x_parts={name: 0.0 for name in dims},   # [스텁] 전부 기수에 겹쳐 둔 상태
-        arm_rotor=1.0,                          # [스텁] f_mount 에 반응하지 않는다
-    )
+    x_cur = hl.l_nose + k.d_end                 # 원통부 시작 + 끝단 여유
+    x_parts = {}
+    for name in k.LAYOUT_ORDER:
+        if name not in dims:
+            continue
+        L = dims[name][0]
+        x_parts[name] = x_cur + 0.5 * L         # 중심 위치
+        x_cur += L
+
+    # 포드는 핀에 결합되므로 축방향 위치가 적재 순서와 무관하다
+    if "motor" in dims:
+        L_m, W_m, _ = dims["motor"]
+        _, _, x_pod, _ = pod(0.0, W_m, L_m, hl, dv)
+        x_parts["motor"] = x_pod
+
+    # 모멘트 암 — 포드가 핀 스팬의 f_mount 지점에 붙는다
+    arm_rotor = hl.r_body + dv.f_mount * hl.b_fin
+    return LayoutOut(x_parts=x_parts, arm_rotor=arm_rotor)
 
 
-def check_fit(dv: DesignVars, hl: HullOut, lay: LayoutOut, dims: dict) -> FitOut:
-    """② 내장 · 클리어런스 판정. 둘 다 양수면 합격.
+def check_fit(dv: DesignVars, hl: HullOut, lay: LayoutOut, dims: dict,
+              fixed_section=None) -> FitOut:
+    """② 내장 · 클리어런스 판정. 둘 다 양수면 합격 (§5.1 규약).
 
-    [스텁] 구현 예정 (P6):
-        g6 = 가용 길이 − 부품 점유 길이 (단면 여유도 함께 검사)
-        g7 = arm_rotor − d_prop/2 − r_body − d_clr
+    g6 : 내장 여유 — 길이와 단면을 **함께** 본다. 둘 중 나쁜 쪽을 쓴다.
+         길이 = 가용 내부 길이 − 부품 점유 길이
+         단면 = 내부 지름 − 부품 단면 대각선 중 최대
+    g7 : 클리어런스 — 로터 간섭과 동체 간섭 중 나쁜 쪽.
+         로터 간 : 인접 로터가 90° 떨어져 있으므로 중심거리 = arm_rotor·√2
+         동체 간 : arm_rotor − d_prop/2 − r_body
+
+    fixed_section : 단면(W·H)이 **외부에서 주어진** 품목 이름 집합.
+        box_from_volume 으로 만든 상자는 내부 원에 내접하도록 정의돼 있어 대각선이
+        항상 정확히 d_int 다. 그걸 단면 검사에 넣으면 g6 이 구조적으로 0 이 되어
+        판정이 아무 정보도 주지 못한다. 그래서 데이터시트 치수를 가진 품목만 본다.
+        None 이면 전부 검사한다.
     """
-    return FitOut(
-        g6=0.0,   # [스텁] 실제 판정 아님
-        g7=0.0,   # [스텁]
-    )
+    d_int = d_internal(dv, hl)
+    l_int = hl.l_cyl - 2.0 * k.d_end
+    names = [n for n in k.LAYOUT_ORDER if n in dims]
+
+    g6_len = l_int - sum(dims[n][0] for n in names)
+    sec_names = names if fixed_section is None else [n for n in names if n in fixed_section]
+    # 단면 — 상자를 원통에 넣으려면 대각선이 내부 지름 안에 들어와야 한다
+    diag = max((math.hypot(dims[n][1], dims[n][2]) for n in sec_names), default=0.0)
+    g6_sec = d_int - diag
+    g6 = min(g6_len, g6_sec)
+
+    g7_adj = math.sqrt(2.0) * lay.arm_rotor - dv.d_prop - k.d_clr
+    g7_body = lay.arm_rotor - 0.5 * dv.d_prop - hl.r_body - k.d_clr
+    g7 = min(g7_adj, g7_body)
+
+    return FitOut(g6=g6, g7=g7)
 
 
 if __name__ == "__main__":   # 검산 — 손계산 대조 (TASKS P2 완료판정)

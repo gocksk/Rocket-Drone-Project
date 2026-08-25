@@ -1,0 +1,34 @@
+# 모터 스펙 표본 — ICD0-008 §8 A-2 회귀용
+#
+# [출처 등급]  A = 제조사 공식 페이지 직접 확인   B = 판매처/2차 출처 (웹 검색 결과)
+# 지금은 **전부 B 등급**이다. 두 곳(getfpv·druav)은 403/404 로 직접 열지 못했고,
+# 나머지는 검색 결과 요약으로 받았다. 팀에서 제조사 페이지·데이터시트로 재확인할 것.
+#
+# [반드시 확인할 것 — 팩터 2 위험]
+# R_mot 이 상간(phase-to-phase)인지 상당(per-phase)인지 제조사가 잘 안 밝힌다.
+# FPV 제조사는 관례적으로 **상간**을 쓰고, ICD §4.3 의 고전 DC 모델도 상간 기준이
+# 맞다(사다리꼴 정류에서 두 상이 직렬로 통전). 아래 값은 전부 상간으로 **가정**했다.
+# 상당이었다면 전부 2배여야 하고, 동손 I²R 이 2배가 되어 THRM 이 통째로 어긋난다.
+#
+# [I0 는 측정값이 아니다]
+# 제조사가 "≤ 1.2 A" 같은 상한 표기를 쓴다. 스펙 한계지 실측이 아니라 업체 간
+# 일관성이 없다. DarwinFPV 행이 대표적 이상치(같은 2400 kv 인데 0.81 vs 2.0~2.1 A).
+#
+# m_g       : 모터 질량 [g] (케이블 제외가 원칙, 아래 note 참조)
+# kv        : [rpm/V]
+# R_mohm    : 상간 저항 [mΩ]   빈칸 = 미공개
+# I0_A_10V  : 무부하 전류 @10 V [A]   빈칸 = 미공개
+name,m_g,kv,R_mohm,I0_A_10V,source_url,note
+iFlight XING 1404,8.5,3800,280.0,,https://www.myfpvstore.com/motors/iflight-xing-1404-unibell-motor-3000kv/,케이블 제외. I0 는 5V 기준 0.72A 만 공개돼 제외
+EMAX E3 2207 1700KV,31.9,1700,74.0,1.20,https://emax-usa.com/collections/new-products/products/e3-series-2207-brushless-motor-choose-kv,실리콘 와이어 제외
+iFlight XING-E Pro 2207 1800KV,33.8,1800,81.5,1.20,https://www.amazon.com/1800KV-Brushless-5-6inch-Propeller-Freestyle/dp/B0D78SQW97,I0 는 "<1.2A" 상한 표기
+Axisflying AE2207 V2 1860KV,35.13,1860,72.67,,https://www.amazon.com/Axisflying-AE2207-Brushless-Racing-Quadcopter/dp/B0FSZ3X3FQ,질량은 와이어 포함
+EMAX E3 2207 2400KV,31.5,2400,48.0,2.10,https://emax-usa.com/collections/new-products/products/e3-series-2207-brushless-motor-choose-kv,실리콘 와이어 제외
+iFlight XING-E Pro 2207 2450KV,33.8,2450,46.8,2.00,https://www.amazon.com/1800KV-Brushless-5-6inch-Propeller-Freestyle/dp/B0D78SQW97,I0 는 "<2.0A" 상한 표기
+DarwinFPV 2207 2400KV,36.4,2400,37.2,0.81,https://darwinfpv.com/products/darwinfpv-2207-2400kv-brushless-motor,I0 이상치 — 적합에서 제외 (같은 kv 대비 1/2.5)
+iFlight XING-E Pro 2207 2750KV,33.8,2750,46.8,2.20,https://www.amazon.com/1800KV-Brushless-5-6inch-Propeller-Freestyle/dp/B0D78SQW97,R 이 2450KV 와 같은 값으로 표기됨 — 제조사 표기 오류 의심
+T-Motor F90 2806.5 1300KV,46.65,1300,,0.95,https://www.readymaderc.com/products/details/t-motor-f90-2806-5-1300kv-brushless-motor,R 미공개
+RCinpower Smoox 2806.5 1350KV,47.0,1350,58.0,1.20,https://yourfpv.co.uk/product/rcinpower-smoox-2806-5-motor/,질량은 3cm 와이어 포함
+RCinpower Smoox 2806.5 1750KV,47.0,1750,48.0,1.65,https://yourfpv.co.uk/product/rcinpower-smoox-2806-5-motor/,질량은 3cm 와이어 포함
+EMAX E3 2807 1300KV,49.6,1300,60.0,1.40,https://emax-usa.com/products/e3-series-2807-brushless-motor-choose-kv,
+iFlight XING2 3110 1600KV,76.4,1600,36.0,,https://shop.iflight.com/product-cat123/XING2-3110-FPV-Cinelifter-Motor-Unibell-Pro1683,질량은 와이어 포함. I0 미공개
