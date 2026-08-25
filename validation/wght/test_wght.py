@@ -30,7 +30,7 @@ import constants as k
 import main
 from interfaces import DesignVars
 from modules import strc
-from modules.wght import _iterate
+from modules.wght import _iterate, growth_split
 from validation.wght.strc_stub import (make_linear_strc, make_power_strc,
                                        make_quantized_strc, make_impure_strc)
 
@@ -374,12 +374,66 @@ def test_16_avio_list_coverage():
     print("  PASS")
 
 
+def test_17_growth_split_crosses_step():
+    banner(17, "성장계수 분해 — 할선이 구조 계단을 넘는가")
+    # 계단형 응답을 만들어 참값을 안다.
+    #   m_str = quantum·round(S·MTOW/quantum)  →  계단 간격(MTOW 기준) = quantum/S
+    quantum, S_true = 0.05, 0.20
+    step_gap = quantum / S_true
+    M_c = 6.0
+    gap_rel = step_gap / M_c
+
+    def parts(M):
+        return {'struct': quantum * round(S_true * M / quantum)}
+
+    history = [(M_c, M_c, 0.0)]
+    print(f"  계단 간격 = {step_gap:.3f} kg = MTOW 의 {gap_rel * 100:.2f} %")
+    print(f"  h_split = {k.h_split}  → 좌우 합쳐 전체 폭 {2 * k.h_split * 100:.1f} %")
+
+    d = growth_split(history, parts)
+    print(f"  참값 S={S_true:.4f}   측정 = {d['struct']:.4f}")
+    check(abs(d['struct'] - S_true) < 0.06,
+          f"할선이 계단을 못 넘었다: {d['struct']:.4f} vs 참값 {S_true}")
+
+    # [회귀] 폭이 계단보다 좁으면 0 이 나온다. h_split 이 왜 커야 하는지를 고정한다 —
+    # 실제로 이 자리에서 구조 항이 13 배 과소평가되고 있었다 (docs 11-45).
+    old = k.h_split
+    try:
+        k.h_split = gap_rel / 4.0          # 전체 폭이 계단 간격의 절반
+        d0 = growth_split(history, parts)
+        print(f"  h_split={k.h_split:.4f} (계단 미달) → {d0['struct']:.4f}  "
+              f"← 좁히면 0 이 된다")
+        check(abs(d0['struct']) < 1e-9,
+              f"좁은 폭인데 0 이 아니다 ({d0['struct']}) — 테스트 전제를 다시 봐야 한다")
+    finally:
+        k.h_split = old
+
+    # 위쪽 사이징이 성립하지 않는 설계점에서도 진단이 본 계산을 죽이지 않는다
+    def parts_fail_up(M):
+        if M > M_c:
+            raise RuntimeError("위쪽 사이징 실패")
+        return parts(M)
+
+    d2 = growth_split(history, parts_fail_up)
+    print(f"  위쪽 실패 시 단측 폴백 → struct={d2['struct']}")
+    check(d2['struct'] is not None, "폴백이 작동하지 않아 진단이 None 이 됐다")
+
+    # 양쪽 다 실패하면 조용히 틀린 값 대신 None 을 준다
+    def parts_fail_all(M):
+        raise RuntimeError("사이징 실패")
+
+    d3 = growth_split(history, parts_fail_all)
+    print(f"  양쪽 실패 시 → {d3}")
+    check(all(v is None for v in d3.values()), "실패했는데 숫자를 만들어냈다")
+    print("  PASS")
+
+
 ALL = [test_1_analytic, test_2_beta_invariance, test_3_sum_identity,
        test_4_structural_divergence, test_5_hole_regression, test_6_numerical_divergence,
        test_7_limit_cycle, test_8_quantization_at_ship_setting, test_9_min_iter_rule,
        test_10_max_iter_reports_err, test_11_purity, test_12_exceptions,
        test_13_mass_properties, test_14_output_shape, test_15_statelessness,
-       test_16_avio_list_coverage]
+       test_16_avio_list_coverage, test_17_growth_split_crosses_step]
 
 if __name__ == '__main__':
     from common.out import stdout_utf8
