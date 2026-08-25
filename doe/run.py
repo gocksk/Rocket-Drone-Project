@@ -77,6 +77,9 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser("doe.run", description="DOE 배치 런처")
     p.add_argument("--box", default="smoke", choices=sorted(space.BOXES),
                    help="상자 이름 (기본 smoke = 공칭 ±4%%, 배관 확인용)")
+    p.add_argument("--box-file", default=None, metavar="경로",
+                   help="상자를 파일에서 읽는다 — 상자 JSON 또는 이전 실행의 "
+                        "매니페스트 (예: runs/screen.manifest.json)")
     p.add_argument("--set", dest="sets", action="append", default=[],
                    metavar="VAR=LO:HI", help="축 범위 덮어쓰기 (여러 번 가능)")
     p.add_argument("--focus", dest="focuses", action="append", default=[],
@@ -91,8 +94,8 @@ def parse_args(argv=None):
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     p.add_argument("--out", default=None, help="출력 경로 앞자리 (기본 runs/<box>)")
     p.add_argument("--resume", action="store_true", help="이미 적힌 id 는 건너뛴다")
-    p.add_argument("--force", action="store_true",
-                   help="매니페스트가 안 맞아도 이어쓴다 (상자가 섞인다)")
+    p.add_argument("--overwrite", action="store_true",
+                   help="로그를 새로 쓴다 — 기존 로그는 <out>.jsonl.old 로 밀어 둔다")
     p.add_argument("--dry-run", action="store_true", help="상자와 표본만 찍고 끝")
     return p.parse_args(argv)
 
@@ -106,12 +109,14 @@ def main_cli(argv=None) -> int:
 
     # ── 상자 ──
     box = space.resolve(a.box, [space.parse_set(s) for s in a.sets],
-                        [space.parse_focus(s) for s in a.focuses])
+                        [space.parse_focus(s) for s in a.focuses], file=a.box_file)
     if space.missing(box):
         print("상자가 비어 있는 축이 있다 — 그대로는 표본을 못 뿌린다.\n")
         for n in space.missing(box):
             print(f"  {n:14s} 미정  (ICD §8 B-2)")
-        print("\n  --set 으로 채운다.  예: --set d_body=0.07:0.11")
+        print("\n  채우는 방법 둘:")
+        print("    --box-file runs/screen.manifest.json   앞 실행의 상자를 그대로")
+        print("    --set d_body=0.07:0.11                 축 하나씩")
         print(f"  참고: pd_prop 의 §2 하한 규칙 값은 {space.pd_prop_lo():.4f} 다.")
         return 2
     for w in space.validate(box):
@@ -142,7 +147,8 @@ def main_cli(argv=None) -> int:
            "git": _git(),
            "constants_sha256": _sha(os.path.join(_ROOT, "constants.py")),
            "python": sys.version.split()[0], "platform": platform.platform(),
-           "box_name": a.box, "box": space.describe(box), "n_ser": list(levels),
+           "box_name": a.box, "box": space.describe(box), "box_file": a.box_file,
+           "n_ser": list(levels),
            "n": a.n, "seed": a.seed, "dup_frac": a.dup_frac, "split": a.split,
            "n_points": len(pts), "workers": a.workers,
            "nominal": dataclasses.asdict(space.NOMINAL)}
@@ -151,9 +157,11 @@ def main_cli(argv=None) -> int:
         with open(man_path, encoding="utf-8") as f:
             old = json.load(f)
         diff = [n for n in key if old.get(n) != man.get(n)]
-        if diff and not a.force:
+        if diff and not a.overwrite:
             print(f"\n기존 매니페스트와 다르다: {', '.join(diff)}")
-            print(f"  {man_path} 을 지우거나 --out 을 바꾸거나 --force 를 준다.")
+            print("  같은 파일에 다른 표본을 섞으면 id 가 겹친다 — 번호 하나가 서로")
+            print("  다른 설계점 둘을 가리키게 된다.")
+            print("  --out 을 바꾸거나, --overwrite 로 새로 쓴다.")
             return 2
         if old.get("constants_sha256") != man["constants_sha256"]:
             print("⚠ constants.py 가 이전 실행 이후 바뀌었다 — 두 로그는 다른 상수에서 나온다")
@@ -161,14 +169,27 @@ def main_cli(argv=None) -> int:
         json.dump(man, f, ensure_ascii=False, indent=1)
 
     done = _load_ids(log_path) if a.resume else set()
+    has_log = os.path.exists(log_path) and os.path.getsize(log_path) > 0
+    if a.overwrite and has_log:
+        # 지우지 않고 한 슬롯짜리 백업으로 민다 — 8 시간짜리 로그가 체크박스 하나로
+        # 사라지면 안 된다.
+        n_old = len(_load_ids(log_path))
+        os.replace(log_path, log_path + ".old")
+        print(f"  기존 로그 {n_old} 행을 {os.path.basename(log_path)}.old 로 밀었다")
+        has_log, done = False, set()
     if done:
         print(f"  재개 — 이미 적힌 {len(done)} 점은 건너뛴다")
-    elif os.path.exists(log_path) and os.path.getsize(log_path) > 0 and not a.force:
-        print(f"\n{log_path} 에 이미 내용이 있다. --resume 이나 --force 를 준다.")
+    elif has_log:
+        print(f"\n{log_path} 에 이미 내용이 있다. 둘 중 하나를 고른다:")
+        print("    --resume      이어서 돌린다 (이미 적힌 id 는 건너뛴다)")
+        print("    --overwrite   새로 쓴다 (기존 로그는 .old 로 밀린다)")
         return 2
     todo = [p for p in pts if p.id not in done]
 
     # ── 배치 ──
+    # 실행 도장 — id 는 **이 실행 안에서만** 유일하다. 로그를 이어 붙이거나 여러
+    # 로그를 합쳐 볼 때 (run, id) 가 있어야 두 설계점을 가를 수 있다.
+    run_stamp = f"{man['created']}#{a.seed}"
     work = functools.partial(worker.evaluate_point, split=a.split)
     t0 = time.perf_counter()
     n_done, codes, rows = 0, Counter(), {}
@@ -180,6 +201,7 @@ def main_cli(argv=None) -> int:
             try:
                 for fut in cf.as_completed(futs):
                     r = fut.result()
+                    r["run"] = run_stamp
                     # 한 줄씩 흘려 쓰고 즉시 flush — 중간에 죽어도 여기까지는 남는다
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
                     f.flush()

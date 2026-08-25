@@ -19,7 +19,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 
 from doe import space
 
@@ -65,18 +65,26 @@ class App(ttk.Frame):
         f = ttk.LabelFrame(self, text="탐색 상자", padding=8)
         f.grid(row=0, column=0, sticky="ew")
         self.box_var = tk.StringVar(value="smoke")
-        ttk.Radiobutton(f, text="smoke — 공칭점 ±4 % (배관 확인용)",
-                        variable=self.box_var, value="smoke",
-                        command=lambda: self._fill_box("smoke")).grid(row=0, column=0,
-                                                                     sticky="w")
-        ttk.Radiobutton(f, text="screen — 1차 스크리닝 (6 축이 비어 있다)",
-                        variable=self.box_var, value="screen",
-                        command=lambda: self._fill_box("screen")).grid(row=0, column=1,
-                                                                       sticky="w",
-                                                                       padx=(16, 0))
-        ttk.Label(f, text=f"pd_prop 의 §2 하한 규칙 = {space.pd_prop_lo():.4f}",
-                  foreground="#555").grid(row=0, column=2, sticky="e", padx=(24, 0))
+        for c, (val, txt) in enumerate((
+                ("smoke", "smoke — 공칭점 ±4 % (배관 확인용)"),
+                ("screen", "screen — 1차 스크리닝 (6 축이 비어 있다)"),
+                ("main", "main — 본 DOE (상자를 불러온다)"))):
+            ttk.Radiobutton(f, text=txt, variable=self.box_var, value=val,
+                            command=lambda v=val: self._fill_box(v)).grid(
+                row=0, column=c, sticky="w", padx=(0 if c == 0 else 16, 0))
         f.columnconfigure(2, weight=1)
+
+        b = ttk.Frame(f)
+        b.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Button(b, text="상자 불러오기", command=self._load_box).grid(row=0, column=0)
+        ttk.Button(b, text="상자 저장", command=self._save_box).grid(row=0, column=1,
+                                                                    padx=(8, 0))
+        ttk.Label(b, text="앞 실행의 매니페스트를 그대로 읽는다 — "
+                          "확정한 상자를 손으로 다시 치지 않는다",
+                  foreground="#777").grid(row=0, column=2, sticky="w", padx=(12, 0))
+        ttk.Label(b, text=f"pd_prop 의 §2 하한 규칙 = {space.pd_prop_lo():.4f}",
+                  foreground="#555").grid(row=0, column=3, sticky="e")
+        b.columnconfigure(3, weight=1)
 
     # ── 축 표 ──────────────────────────────────────────────────────
     def _build_axes(self):
@@ -112,7 +120,7 @@ class App(ttk.Frame):
         self.out_var = tk.StringVar(value="runs/smoke")
         self.split_var = tk.BooleanVar(value=False)
         self.resume_var = tk.BooleanVar(value=False)
-        self.force_var = tk.BooleanVar(value=False)
+        self.ovw_var = tk.BooleanVar(value=False)
         self.ser_vars = {s: tk.BooleanVar(value=(s == 6)) for s in space.N_SER_LEVELS}
 
         def ent(col, label, var, w=8, tip=""):
@@ -145,8 +153,10 @@ class App(ttk.Frame):
                         variable=self.split_var).grid(row=0, column=2, padx=(16, 0))
         ttk.Checkbutton(g, text="이어 돌리기 (--resume)",
                         variable=self.resume_var).grid(row=0, column=3, padx=(16, 0))
-        ttk.Checkbutton(g, text="덮어쓰기 허용 (--force)",
-                        variable=self.force_var).grid(row=0, column=4, padx=(16, 0))
+        # 「덮어쓰기」가 실제로는 이어붙이기였던 것을 바로잡았다. 이름과 하는 일이
+        # 어긋나면 로그에 id 가 겹친 채로 쌓인다.
+        ttk.Checkbutton(g, text="로그 새로 쓰기 (--overwrite · 기존 로그는 .old 로)",
+                        variable=self.ovw_var).grid(row=0, column=4, padx=(16, 0))
 
         b = ttk.Frame(f)
         b.grid(row=3, column=0, columnspan=10, sticky="ew", pady=(10, 0))
@@ -156,12 +166,14 @@ class App(ttk.Frame):
         self.btn_stop = ttk.Button(b, text="중단", command=self._stop, state="disabled")
         self.btn_rep = ttk.Button(b, text="분석 보기", command=self._report,
                                   state="disabled")
+        self.btn_csv = ttk.Button(b, text="CSV 내보내기", command=self._export,
+                                  state="disabled")
         for i, w in enumerate((self.btn_dry, self.btn_run, self.btn_stop,
-                               self.btn_rep)):
+                               self.btn_rep, self.btn_csv)):
             w.grid(row=0, column=i, padx=(0, 8))
         self.est = ttk.Label(b, text="", foreground="#333")
-        self.est.grid(row=0, column=4, sticky="e", padx=(16, 0))
-        b.columnconfigure(4, weight=1)
+        self.est.grid(row=0, column=5, sticky="e", padx=(16, 0))
+        b.columnconfigure(5, weight=1)
 
     # ── 출력 ───────────────────────────────────────────────────────
     def _build_output(self):
@@ -194,6 +206,44 @@ class App(ttk.Frame):
         if self.out_var.get().startswith("runs/"):
             self.out_var.set(f"runs/{name}")
         self._refresh()
+
+    def _load_box(self):
+        """앞 실행의 매니페스트(또는 저장해 둔 상자)를 읽어 칸을 채운다.
+
+        본 DOE 의 상자는 스크리닝이 만들어 주는 것이다. 손으로 열한 축을 다시
+        옮겨 적으면 그중 하나를 틀렸을 때 배치 전체가 조용히 어긋난다.
+        """
+        p = filedialog.askopenfilename(
+            title="상자 또는 매니페스트 고르기",
+            initialdir=os.path.join(_ROOT, "runs"),
+            filetypes=[("상자·매니페스트 JSON", "*.json"), ("모든 파일", "*.*")])
+        if not p:
+            return
+        try:
+            box = space.load_box(p)
+        except Exception as e:
+            self._write(f"\n상자를 못 읽었다 — {type(e).__name__}: {e}\n")
+            return
+        for a in space.AXES:
+            rng = box.get(a)
+            self.lo_var[a].set("" if rng is None else f"{rng[0]:.10g}")
+            self.hi_var[a].set("" if rng is None else f"{rng[1]:.10g}")
+        self._write(f"\n상자를 읽었다: {p}\n")
+        self._refresh()
+
+    def _save_box(self):
+        box, bad = self._read_box()
+        if bad:
+            self._write(f"\n비어 있는 축이 있어 저장하지 않았다: {', '.join(bad)}\n")
+            return
+        p = filedialog.asksaveasfilename(
+            title="상자 저장", defaultextension=".json",
+            initialdir=os.path.join(_ROOT, "runs"), initialfile="box.json",
+            filetypes=[("JSON", "*.json")])
+        if not p:
+            return
+        space.save_box(box, p)
+        self._write(f"\n상자를 저장했다: {p}\n")
 
     # ── 입력 → 상자 ────────────────────────────────────────────────
     def _read_box(self):
@@ -264,8 +314,8 @@ class App(ttk.Frame):
             cmd.append("--split")
         if self.resume_var.get():
             cmd.append("--resume")
-        if self.force_var.get():
-            cmd.append("--force")
+        if self.ovw_var.get():
+            cmd.append("--overwrite")
         if dry:
             cmd.append("--dry-run")
         return cmd
@@ -290,7 +340,7 @@ class App(ttk.Frame):
         self._show_cmd(cmd)
         self.log.delete("1.0", "end")
         self.bar["value"] = 0
-        for w in (self.btn_dry, self.btn_run, self.btn_rep):
+        for w in (self.btn_dry, self.btn_run, self.btn_rep, self.btn_csv):
             w["state"] = "disabled"
         self.btn_stop["state"] = "normal"
 
@@ -327,6 +377,7 @@ class App(ttk.Frame):
                     if os.path.exists(os.path.join(_ROOT,
                                                    self.out_var.get() + ".jsonl")):
                         self.btn_rep["state"] = "normal"
+                        self.btn_csv["state"] = "normal"
                     continue
                 m = PROG_RE.match(line)
                 if m:
@@ -345,6 +396,11 @@ class App(ttk.Frame):
     def _report(self):
         log = self.out_var.get() + ".jsonl"
         self._start(cmd=[sys.executable, "-m", "doe.report", log])
+
+    def _export(self):
+        """로그를 CSV 사본으로. 원본은 JSONL 이고 분석·재개는 그쪽을 본다."""
+        log = self.out_var.get() + ".jsonl"
+        self._start(cmd=[sys.executable, "-m", "doe.export", log])
 
 
 def main() -> int:
