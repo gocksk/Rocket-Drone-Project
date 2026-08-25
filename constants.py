@@ -122,8 +122,22 @@ N_trim_max = 40           # ICD외 트림 뉴턴 반복 상한
 dtheta_max = math.radians(15.0)   # ICD외 뉴턴 스텝 제한 [rad]
 theta_lo = math.radians(-20.0)    # ICD외 자세각 하한 (양력 과잉 → 기수 숙임)
 theta_hi = math.radians(89.0)     # ICD외 자세각 상한 (호버는 별도 경로)
+# dash 스로틀 목표 — kv 를 정하는 기준 (P5.6 확정, docs §11-31).
+# kv 를 "dash 에서 버스를 100% 쓰도록" 잡으면 전압 여유가 0 이라 V_max ≡ V_cr 이
+# 되고 C3(가중치 33.7%)가 정보를 잃는다. 게다가 네 모터가 전부 100% 면 차동 추력을
+# 위로 못 올려 **조종 권한이 0**이다 (§5.1 STAB "조종 모멘트 = 차동 추력 × arm_rotor").
+# 즉 여유는 선택이 아니라 조종성 요구다.
+# TBD: 값의 근거는 g9 다. P6 에서 STAB 이 조종 모멘트를 실제로 계산하면 교차검증한다.
+thr_dash = 0.85           # ICD외 TBD — dash 에서 버스 전압의 몇 %까지 쓸까
 kv_lo, kv_hi = 50.0, 20000.0      # ICD외 kv 근찾기 구간 [rpm/V]
 N_bisect_max = 80         # ICD외 1차원 이분법 반복 상한
+# §4.5 U_eval 순환 닫기 (resp_of 안)
+n_U_scan = 10             # ICD외 U 브래킷 하한을 찾는 고정 격자 점수
+eps_U = 1.0e-3            # ICD외 U_eval 수렴 허용오차 [V]
+N_U_max = 25              # ICD외 U_eval 근찾기 반복 상한
+V_max_cap = 2.5           # ICD외 V_max 탐색 상한 (V_cr 배수)
+n_V_grid = 40             # ICD외 V_max 격자 훑기 점수 — 요구추력이 V 에 단조가 아니라
+                          #   (호버 근방에서 높고 중간에 최소) 바로 이분법을 걸 수 없다
 k_n_search_cap = 3.0      # ICD외 팁 마하 한계를 넘겨 요구 rpm 을 찾을 때의 탐색 상한 배수
                           #   (g2 를 '초과량' 으로 재려면 한계 위도 봐야 한다)
 m_mot_lo, m_mot_hi = 0.002, 0.500   # ICD외 모터 질량 이분법 구간 [kg]
@@ -151,10 +165,59 @@ k_air = 0.0257            # ICD외 TBD 공기 열전도율 [W/m·K] @20°C — N
                           #   온도 의존을 무시했다 (20→120°C 에서 약 +25%)
 
 # ════════════════════════════════════════════════════════════════════════
+# STRC — 프린트 구조 (ICD §5.1 은 "슬라이서 회귀" 라고만 적었다)
+# ════════════════════════════════════════════════════════════════════════
+rho_mat = 1240.0          # ICD외 TBD 프린트 재료 밀도 [kg/m³] — PLA
+SF = 1.5                  # ICD외 TBD 안전계수
+
+# ── 재료 허용치 — STRC 담당 모델 기준 ──
+# 카탈로그값에 **적층 저하 계수**를 곱하고 안전계수로 나눠 쓴다.
+# FDM 은 층간 결합이 약해 카탈로그 인장강도를 그대로 쓸 수 없다.
+sigma_cat = 45.0e6        # ICD외 TBD 카탈로그 인장강도 [Pa]
+tau_cat = sigma_cat / math.sqrt(3.0)   # ICD외 von Mises 전단 환산
+k_layer = 0.5             # ICD외 TBD 적층 저하 계수 (굽힘·전단 공통 기본값)
+k_layer_b = k_layer       # ICD외 TBD 굽힘용
+k_layer_s = k_layer       # ICD외 TBD 전단용
+k_tau = 1.5               # ICD외 직사각 단면 최대전단 계수 (평균의 3/2)
+sigma_allow = 50.0e6      # ICD외 TBD 인장 허용응력 [Pa] — 구 모델 잔존, 미사용
+
+# ── 슬라이서 설정 — 프린트 실물 파라미터 ──
+w_line = 0.00045          # ICD외 TBD 압출 라인 폭 [m]. w_fill 을 이 정수배로 올린다
+n_peri = 3.0              # ICD외 TBD 둘레 수 → 핀 외피 두께 = n_peri·w_line
+k_dens = 0.95             # ICD외 TBD 100% 인필의 실효 충전율 (완전히 안 채워진다)
+w_fill_min = 0.001        # ICD외 TBD 루트 보강 폭 하한 [m]
+k_w = 0.6                 # ICD외 TBD 보강 폭 상한비 (루트 코드 대비) — g5 의 한 항
+k_sec = 1.0               # ICD외 TBD 핀 단면 형상계수 (직사각 대비 실제 익형 부피비)
+k_taper = 0.6             # ICD외 TBD 보강이 스팬을 따라 줄어드는 비율
+k_sl_pod = 1.0            # ICD외 TBD 포드 슬라이서 할증
+k_sl_fill = 1.0           # ICD외 TBD 루트 보강 슬라이서 할증
+t_wall_pod = 0.0012       # ICD외 TBD 포드 벽두께 [m]
+k_r = 0.4                 # ICD외 TBD 핀 질량의 대표 반경비 (J_xx 용)
+k_r_fill = 0.4            # ICD외 TBD 루트 보강의 대표 반경비
+rho_air = 1.225           # ICD외 해면 공기밀도 [kg/m³] — STRC 가 ATM 없이 쓸 때의
+                          #   대비값. **정상 경로는 AERO 의 q_cr 을 받는다** (§5.1)
+# 인필율 규칙 — 하중배수가 높을수록 채운다.  φ = phi_0 + k_phi·(n_design − n_ref_load)
+phi_0 = 0.25              # ICD외 TBD 기준 인필율 [-]
+k_phi = 0.05              # ICD외 TBD 하중배수당 인필율 증분 [-]
+# 슬라이서 할증 — 둘레·서포트·심(seam) 때문에 이론 부피보다 재료가 더 든다.
+# ICD §5.1 이 말한 "슬라이서 회귀" 의 자리다. **실측 대기** — 지금은 자리표시다.
+k_sl_shell = 1.15         # ICD외 TBD 동체 쉘 할증
+k_sl_fin = 1.12           # ICD외 TBD 핀 할증
+k_sl_bulk = 1.10          # ICD외 TBD 격벽 할증
+N_bulk = 2                # ICD외 TBD 격벽 수
+t_bulk = 0.0020           # ICD외 TBD 격벽 두께 [m]
+alpha_lim = math.radians(4.0)   # ICD외 TBD 핀 하중 산정용 받음각 한계 [rad]
+
+# ════════════════════════════════════════════════════════════════════════
 # §3.5 합격 기준 · 안정
 # ════════════════════════════════════════════════════════════════════════
 SM_min = 1.0              # 최소 정적 안정여유 [cal] (초기값)
 k_ctrl = 1.5              # TBD 조종 모멘트 여유비 — g9
+k_az = 2.0 * math.sqrt(2.0)   # ICD외 TBD X 배치 방위각 계수.
+                          #   피치 모멘트 = k_az · ΔT · arm_rotor.
+                          #   로터 4기가 45° 방위에 있으면 각 모멘트암이 arm/√2 이고
+                          #   4기 합이 4·ΔT·arm/√2 = 2√2·ΔT·arm 이다. + 배치면 2.0.
+                          #   **방위각 규약 승인 대기** — X 인지 + 인지 확정 필요
 alpha_dot_req = 1.0       # TBD 요구 천이 각가속도 [rad/s²]
 d_alpha = math.radians(5.0)   # TBD 기준 돌풍 받음각 Δα [rad] — 운용 환경 가정에서
 

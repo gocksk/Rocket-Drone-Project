@@ -85,6 +85,15 @@ class HullOut:
     # 여기서 나눠 낸다. [확정 필요]
     S_wet_body: float    # 노즈 + 원통 [m²]
     S_wet_fin: float     # 핀 양면 [m²]
+    x_wet_body: float    # 동체 젖음면적의 **축방향 도심** [m] — STRC 가 쉘 질량을
+                         # 놓는 위치다. 노즈분을 빼먹고 원통 중점에 두면 가장 무거운
+                         # 항목이 뒤로 밀려 x_cg 가 통째로 틀어진다 [로컬 개정 §11-35]
+    t_wall: float        # 동체 벽두께 [m] — **이 값이 벽두께의 유일한 정의다.**
+                         # 개념적으로는 STRC 소관이지만 GEOM 의 d_internal 이 ⓪에서
+                         # 먼저 필요로 한다. 모듈이 서로를 못 부르므로(§5) GEOM 이
+                         # 계산해 이 계약에 실어 보내고, STRC 는 받아 쓴다.
+                         # 식을 두 곳에 두면 한쪽만 고쳐도 조용히 어긋난다
+                         # [로컬 개정 11-41]
 
 
 @dataclass
@@ -231,10 +240,12 @@ class AchievedRangeOut:
 # ══════════════════════════════════════════════════════════════════════════
 @dataclass
 class StrcOut:
-    W_str: float         # 구조 무게 [kg] → WGHT
+    W_str: float         # 구조 무게 [kg] → WGHT   (STRC 담당 코드의 m_str 과 같은 값)
     m_print: float       # 프린트 재료 무게 [kg] → COST
-    g5: float            # 응력 여유 (양수 합격)
-    breakdown_str: list  # [MassItem] — WGHT 의 x_cg·J 용
+    g5: float            # 응력 여유 (양수 합격)   (담당 코드의 g10 — ICD0-007 번호였다)
+    breakdown_str: list  # [MassItem] — WGHT 의 x_cg·J 용. [0] 은 동체 쉘이어야 한다
+    m_fill: float = 0.0  # 핀 루트 보강 질량 [kg] — 진단. **MTOW 의존 항이다**
+    w_fill: float = 0.0  # 핀 루트 보강 폭 [m] — 진단. line width 정수배로 양자화된다
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -310,6 +321,8 @@ class RespPayload:
     smot: SizeMotorOut
     reqE: RequiredEnergyOut
     strc: StrcOut
+    U_eval: float        # §4.5 순환을 닫고 얻은 평가 전압 [V] — 진단
+    n_U: int             # U_eval 근찾기 반복 횟수 — 진단. -1 이면 해가 없다
 
 
 # ══════════════════════════════════════════════════════════════════════════

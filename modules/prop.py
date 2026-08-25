@@ -447,8 +447,9 @@ def solve_point(V: float, MTOW: float, m_mot: float,
     두 겹은 **중첩**으로 푼다 (P3 확정): 바깥이 트림, 안쪽이 rpm.
 
     [kv 인자 — 사이징 모드 / 평가 모드]  [로컬 개정 §11-16]
-      kv=None : **사이징 모드**. "이 작동점에서 버스 전압을 다 쓰는 kv" 를 푼다.
-                즉 100% 스로틀 전제다. dash 점처럼 실제로 전개를 다 쓰는 곳에만 맞다.
+      kv=None : **사이징 모드**. "이 작동점에서 스로틀 thr_dash 를 쓰는 kv" 를 푼다.
+                dash 점처럼 전개에 가까운 곳에만 맞다. 100% 가 아닌 이유는
+                조종 여유(§5.1 STAB) 와 C3 정보량(§11-30) 둘 다다.
       kv=값   : **평가 모드**. 모터가 이미 정해진 상태에서 요구 전압 U_req 를 낸다.
                 스로틀 = U_req/U_bus 이고, U_req > U_bus 면 그 추력을 못 낸다.
 
@@ -485,8 +486,11 @@ def solve_point(V: float, MTOW: float, m_mot: float,
     omega = 2.0 * math.pi * n
     tau = P_shaft / omega if omega > 0 else 0.0
 
-    if kv is None:                                  # 사이징 모드 — kv 를 푼다
-        kv, me = _solve_kv(tau, omega, U_bus, m_mot)
+    if kv is None:
+        # 사이징 모드 — kv 를 푼다. 목표는 버스 **전부**가 아니라 thr_dash 까지다:
+        # 100% 를 쓰도록 잡으면 전압 여유가 0 이라 V_max ≡ V_cr 이 되고(§11-30),
+        # 네 모터가 전부 전개면 차동 추력을 위로 못 올려 조종 권한도 0 이 된다.
+        kv, me = _solve_kv(tau, omega, k.thr_dash * U_bus, m_mot)
         if kv is None:
             fail.rpm = n * 60.0
             fail.P_shaft = P_shaft
@@ -532,7 +536,7 @@ def t_hover_worst() -> float:
 
 
 def size_motor(MTOW: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
-               U_bus: float, k_mot: float) -> SizeMotorOut:
+               U_bus: float, k_mot: float, pod_of=None) -> SizeMotorOut:
     """① 요구 → 모터 질량.  m_mot 에 대한 **결정론적 이분법**.
 
     후보 질량마다:
@@ -556,11 +560,16 @@ def size_motor(MTOW: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
     """
     D = pmap.d_prop
     t_hv = t_hover_worst()
+    # pod_of(m_mot) -> (d_pod, l_pod). 후보 질량마다 포드가 커지고 그만큼 항력이 는다.
+    # GEOM 을 직접 부르면 새 모듈 간 호출이 되므로 **런처가 클로저로 조립해** 넘긴다
+    # (§5 "런처가 조립한다"). None 이면 포드 항력 0 — 그건 '아직 안 넘겼다'는 뜻이다.
+    def _pod(m):
+        return pod_of(m) if pod_of else None
 
     # ── g2: 팁 마하 — 모터와 무관하다 (rpm 은 요구추력이 정한다) ──
     # 한계 위까지 훑어 '초과량' 으로 재야 g2 가 두 경우에 같은 의미를 갖는다.
     W = MTOW * k.g
-    T_d, _, _, trim_ok = _trim(k.V_cr, W, aer, air)
+    T_d, _, _, trim_ok = _trim(k.V_cr, W, aer, air, _pod(k.m_mot_hi))
     if not trim_ok:
         return SizeMotorOut(m_mot=0.0, I_dash=0.0, g2=0.0, g3=0.0, active="trim_fail",
                             n_bisect=0, kv=0.0, T_peak=0.0, thr_hover=0.0,
@@ -574,13 +583,18 @@ def size_motor(MTOW: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
                             P_shaft_dash=0.0)
     g2 = k.M_tip_max - M_tip(k.V_cr, n_req, D, air.a_snd)
 
-    def evaluate_m(m):
-        """후보 질량 하나를 평가한다. 반환: (성립 여부, dash, hover, thrm)"""
-        d = solve_point(k.V_cr, MTOW, m, pmap, aer, air, U_bus)      # 사이징 모드
+    def evaluate_m(m, kv_fix=None):
+        """후보 질량 하나를 평가한다. 반환: (성립 여부, dash, hover, thrm)
+
+        kv_fix=None 이면 사이징 모드(kv 를 푼다). 값을 주면 그 kv 를 고정하고
+        평가만 한다 — k_mot 여유를 반영할 때 쓴다.
+        """
+        d = solve_point(k.V_cr, MTOW, m, pmap, aer, air, U_bus,
+                        pod=_pod(m), kv=kv_fix)
         if not d.ok:
             return False, d, None, None
         h = solve_point(0.0, MTOW, m, pmap, aer, air, U_bus,
-                        hover=True, kv=d.kv)                         # 평가 모드
+                        hover=True, kv=d.kv, pod=_pod(m))            # 평가 모드
         if not h.ok:
             return False, d, h, None                                 # 호버 전압 부족
         v_wake = hover_wake(h.T / k.N_rot, D, air.rho)
@@ -591,7 +605,8 @@ def size_motor(MTOW: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
     # 브래킷 하한만 pm_mot 추정치로 좁힌다 (§3.3 "이분법 초기 구간").
     # 추정이 빗나가 하한이 이미 성립하면 절대 하한으로 되돌린다 — 브래킷 때문에
     # 답을 지나쳐 너무 작은 모터를 반환하는 사고를 막는다.
-    d_probe = solve_point(k.V_cr, MTOW, k.m_mot_hi, pmap, aer, air, U_bus)
+    d_probe = solve_point(k.V_cr, MTOW, k.m_mot_hi, pmap, aer, air, U_bus,
+                          pod=_pod(k.m_mot_hi))
     m_guess = d_probe.P_shaft / (k.pm_mot * 1000.0) if d_probe.P_shaft > 0 else k.m_mot_hi
     lo = max(k.m_mot_lo, min(m_guess / k.k_mot_bracket, k.m_mot_hi))
     hi = k.m_mot_hi
@@ -618,12 +633,19 @@ def size_motor(MTOW: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
     m_min = hi
 
     # ── 활성조건 — 열이 **어느 구간**에서 물렸나 (cruise / hover) ──
-    _, _, _, th_min = evaluate_m(m_min)
+    _, d_min, _, th_min = evaluate_m(m_min)
     active = th_min.hot_at if th_min else "infeasible"
 
-    # ── k_mot 여유를 곱한 최종 모터로 진단값을 다시 낸다 ──
+    # ── k_mot 여유 — **kv 는 요구 최소 모터가 정한다** ──
+    # k_mot 은 "요구 최소치의 몇 배로 키울까"다 (§2.2). 같은 kv 급의 더 큰 모터를
+    # 사는 것이므로 스테이터가 커져 R_mot 이 내려가고, 같은 추력을 더 낮은 전압으로
+    # 낸다 → 남는 전압만큼 더 빨리 난다. §2.2 의 "더 빠르다(C3) ↔ 무거워진다(C1)".
+    #
+    # kv 를 최종 질량에서 다시 풀면 안 된다. 사이징 모드는 "그 작동점에서 버스를
+    # 다 쓰는 kv" 를 주므로, 모터를 키워도 kv 가 따라 내려가 전압 여유가 0 으로
+    # 되돌아간다 — 그러면 V_max ≡ V_cr 이 되어 C3 가 정보를 잃는다.
     m_final = k_mot * m_min
-    _, d, h, th = evaluate_m(m_final)
+    _, d, h, th = evaluate_m(m_final, kv_fix=d_min.kv)
 
     return SizeMotorOut(
         m_mot=m_final,
@@ -639,17 +661,115 @@ def size_motor(MTOW: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
     )
 
 
+def thrust_max(V: float, m_mot: float, kv: float, pmap: PropMapOut,
+               air: AtmOut, U_bus: float) -> tuple:
+    """주어진 속도에서 파워트레인이 낼 수 있는 **최대 총추력** [N] 과 그 한계.
+
+    회전수 상한은 둘 중 낮은 쪽이다:
+      · 팁 마하 한계  n_tip_limit(V)
+      · 전압 한계     U_req(n) = U_bus 가 되는 n  (U_req 는 n 에 단조증가)
+
+    STAB 의 조종 여유(g9)가 "지금 쓰고 있는 추력 위로 얼마나 더 낼 수 있나" 를
+    묻기 때문에 필요하다. 반환: (T_total, n, "tip"|"volt")
+    """
+    D = pmap.d_prop
+    n_tip = n_tip_limit(V, D, air.a_snd)
+    if n_tip <= 0.0:
+        return 0.0, 0.0, "tip"
+
+    def U_req_at(n):
+        J = V / (n * D) if n > 0 else 0.0
+        P_sh = pmap.CP(J) * air.rho * n ** 3 * D ** 5
+        om = 2.0 * math.pi * n
+        R_mot, I0 = motor_regression(m_mot, kv)
+        return motor_elec(P_sh / om if om > 0 else 0.0, om, kv, R_mot, I0, U_bus).U_req
+
+    if U_req_at(n_tip) <= U_bus:
+        n, why = n_tip, "tip"
+    else:                                   # 전압이 먼저 걸린다 — 이분법
+        lo, hi = 0.0, n_tip
+        for _ in range(k.N_bisect_max):
+            mid = 0.5 * (lo + hi)
+            if U_req_at(mid) <= U_bus:
+                lo = mid
+            else:
+                hi = mid
+            if hi - lo < 1e-9 * n_tip:
+                break
+        n, why = lo, "volt"
+
+    J = V / (n * D) if n > 0 else 0.0
+    return k.N_rot * pmap.CT(J) * air.rho * n * n * D ** 4, n, why
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # ② 성능 평가
 # ══════════════════════════════════════════════════════════════════════════
-def evaluate(MTOW: float, m_mot: float, E_batt: float, n_ser: int,
-             pmap: PropMapOut, aer: AeroOut, air: AtmOut,
-             U_bus: float) -> EvaluateOut:
-    """② 최고속도 실계산 + 소음.  [스텁] P3 이후 구현한다."""
-    return EvaluateOut(
-        margin_V=0.0,       # [스텁] ← EC C3 (가중치 33.7%)
-        SPL_hover=0.0,      # [스텁] ← EC C6
-        kv=0.0,             # [스텁]
-        P_hover=0.0,        # [스텁]
-        V_max=0.0,          # [스텁]
-    )
+def evaluate(MTOW: float, m_mot: float, kv: float, E_batt: float, n_ser: int,
+             I_dash: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
+             pod=None) -> EvaluateOut:
+    """② 최고속도 실계산 + 소음.
+
+    §4.2 — 최고속도를 여유 변수에서 **읽지 않는다.** 확정된 파워트레인
+    (모터·프롭·배터리)으로 추력 = 항력 평형이 성립하는 최대 V 를 직접 푼다.
+    작동점은 solve_point 를 공유한다 (§4.6 이중 구현 금지).
+
+    평가 전압은 §4.5 규약대로 **방전 말기** U_eval 이다 — 만충으로 재면 안 된다.
+
+    ⚠ 요구추력은 V 에 단조가 아니다. 호버 근방에서 무게만큼 필요하다가 중간에
+      최소가 되고 다시 V² 로 는다. 그래서 이분법을 바로 걸 수 없고, 고정 격자를
+      훑어 **마지막으로 성립하는 구간**을 찾은 뒤 그 안에서만 이분법을 돈다.
+    """
+    U_ev = U_eval(E_batt, n_ser, I_dash)
+
+    def ok(V):
+        return solve_point(V, MTOW, m_mot, pmap, aer, air, U_ev,
+                           kv=kv, pod=pod).ok
+
+    # ── V_max — 격자 훑기 + 이분법 ──
+    V_hi = k.V_max_cap * k.V_cr
+    Vs = [V_hi * i / k.n_V_grid for i in range(1, k.n_V_grid + 1)]
+    last = -1
+    for i, V in enumerate(Vs):
+        if ok(V):
+            last = i
+    if last < 0:
+        V_max = 0.0                                  # 어떤 속도로도 못 난다
+    elif last == len(Vs) - 1:
+        V_max = Vs[-1]                               # 탐색 상한 초과
+    else:
+        lo, hi = Vs[last], Vs[last + 1]
+        for _ in range(k.N_bisect_max):
+            mid = 0.5 * (lo + hi)
+            if ok(mid):
+                lo = mid
+            else:
+                hi = mid
+            if hi - lo < k.eps_bisect_rel * V_hi:
+                break
+        V_max = lo
+
+    # ── 호버 작동점 — 소음과 진단용 ──
+    hv = solve_point(0.0, MTOW, m_mot, pmap, aer, air, U_ev, hover=True,
+                     kv=kv, pod=pod)
+    n_hv = hv.rpm / 60.0
+    V_tip = math.pi * pmap.d_prop * n_hv
+    T_1 = hv.T / k.N_rot
+
+    # ── SPL — 앵커 기준점에서 스케일링 ──
+    # 회전익 소음의 통상 스케일: 음향출력 ∝ 팁속도^6 → 60·log10, 추력 ∝ 10·log10,
+    # 거리는 구면 확산 −20·log10, 비간섭 음원 N 개는 +10·log10.
+    # ⚠ N_ref(앵커의 로터 수 기준)가 **미확인**이다. 1 로 두면 4 로 둘 때보다
+    #   10·log10(4) = 6.0 dB 높게 나온다. constants.py 의 선언값을 그대로 쓰고
+    #   여기서 임의로 정하지 않는다. [확정 필요]
+    if V_tip > 0.0 and T_1 > 0.0:
+        SPL = (k.SPL_ref
+               + 60.0 * math.log10(V_tip / k.V_tip_ref)
+               + 10.0 * math.log10(T_1 / k.T_ref)
+               - 20.0 * math.log10(k.r_obs / k.r_ref)
+               + 10.0 * math.log10(k.N_rot / k.N_ref))
+    else:
+        SPL = 0.0
+
+    return EvaluateOut(margin_V=V_max / k.V_cr, SPL_hover=SPL,
+                       kv=kv, P_hover=hv.P, V_max=V_max)
