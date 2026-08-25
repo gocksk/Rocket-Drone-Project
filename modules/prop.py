@@ -399,7 +399,7 @@ def _trim(V: float, W: float, aer: AeroOut, air: AtmOut, pod=None) -> tuple:
 
 
 def _rpm_for_thrust(T_1: float, V: float, pmap: PropMapOut, air: AtmOut,
-                    d_prop: float) -> tuple:
+                    d_prop: float, cap: float = 1.0) -> tuple:
     """로터 1기 요구추력 T_1 을 내는 회전수 [rev/s] — 1차원 이분법.
 
     T(n) = CT(V/(nD))·ρ·n²·D⁴ 는 n 에 단조증가라 이분법이 반드시 수렴한다.
@@ -407,7 +407,7 @@ def _rpm_for_thrust(T_1: float, V: float, pmap: PropMapOut, air: AtmOut,
     반환: (n, n_iter, ok)
     """
     D = d_prop
-    n_hi = n_tip_limit(V, D, air.a_snd)
+    n_hi = cap * n_tip_limit(V, D, air.a_snd)   # cap>1 이면 팁 마하 한계 위까지 본다
     if n_hi <= 0.0:
         return 0.0, 0, False
 
@@ -435,18 +435,27 @@ def _rpm_for_thrust(T_1: float, V: float, pmap: PropMapOut, air: AtmOut,
 
 def solve_point(V: float, MTOW: float, m_mot: float,
                 pmap: PropMapOut, aer: AeroOut, air: AtmOut,
-                U_bus: float, hover: bool = False, pod=None) -> SolvePointOut:
+                U_bus: float, hover: bool = False, pod=None,
+                kv: float = None) -> SolvePointOut:
     """공용 작동점 — 평형이 두 겹이다 (§5.1 PROP).
 
       1. 기체 트림   : 미지수 (T, θ) 에 대한 2×2 뉴턴 (§4.1)
-      2. 파워트레인 : 요구추력을 내는 rpm 을 1차원 이분법으로 찾고,
-                      그 (τ, ω) 를 버스 전압으로 내는 kv 를 다시 이분법으로 찾는다
+      2. 파워트레인 : 요구추력을 내는 rpm 을 1차원 이분법으로 찾고, 그 (τ, ω) 를
+                      **버스 전압으로 내는 kv** 를 다시 이분법으로 찾는다
 
     호버(θ=90°)는 1번을 건너뛰고 추력지지(T=W)로 푼다.
-    kv 는 토크 평형의 **해**로 나온다 — 설계변수가 아니다.
-
     두 겹은 **중첩**으로 푼다 (P3 확정): 바깥이 트림, 안쪽이 rpm.
-    안쪽이 단조함수라 이분법이 반드시 수렴하고, 바깥 2×2 는 야코비안이 작아 안정적이다.
+
+    [kv 인자 — 사이징 모드 / 평가 모드]  [로컬 개정 §11-16]
+      kv=None : **사이징 모드**. "이 작동점에서 버스 전압을 다 쓰는 kv" 를 푼다.
+                즉 100% 스로틀 전제다. dash 점처럼 실제로 전개를 다 쓰는 곳에만 맞다.
+      kv=값   : **평가 모드**. 모터가 이미 정해진 상태에서 요구 전압 U_req 를 낸다.
+                스로틀 = U_req/U_bus 이고, U_req > U_bus 면 그 추력을 못 낸다.
+
+    호버를 사이징 모드로 풀면 kv 가 실존 범위(조사 1300~3800) 밑으로 떨어진다 —
+    실제 기체는 호버를 부분 스로틀로 하기 때문이다. size_motor 는 dash 로 kv 를
+    정하고 호버는 평가 모드로 본다.
+
     수렴 실패는 infeasible 이다 — ok=False 로 알리고 호출부가 사유 코드로 옮긴다.
     """
     W = MTOW * k.g
@@ -454,57 +463,179 @@ def solve_point(V: float, MTOW: float, m_mot: float,
     if hover:
         T = W
         theta = math.pi / 2.0
-        n_trim = 0
         trim_ok = True
     else:
-        T, theta, n_trim, trim_ok = _trim(V, W, aer, air, pod)
+        T, theta, _, trim_ok = _trim(V, W, aer, air, pod)
 
+    fail = SolvePointOut(T=T, theta=theta, rpm=0.0, I=0.0, P=0.0, kv=0.0,
+                         P_cu=0.0, P_shaft=0.0, U_req=0.0, ok=False)
     if not trim_ok:
-        return SolvePointOut(T=T, theta=theta, rpm=0.0, I=0.0, P=0.0,
-                             kv=0.0, P_cu=0.0, ok=False)
+        return fail
 
-    # ── 파워트레인 ──
+    # ── 파워트레인: rpm 은 추력이 정한다 (모터와 무관) ──
     T_1 = T / k.N_rot
     D = pmap.d_prop
-    n, n_bis, rpm_ok = _rpm_for_thrust(T_1, V, pmap, air, D)
+    n, _, rpm_ok = _rpm_for_thrust(T_1, V, pmap, air, D)
     if not rpm_ok:
-        return SolvePointOut(T=T, theta=theta, rpm=n * 60.0, I=0.0, P=0.0,
-                             kv=0.0, P_cu=0.0, ok=False)
+        fail.rpm = n * 60.0
+        return fail
 
     J = V / (n * D) if n > 0 else 0.0
     P_shaft = pmap.CP(J) * air.rho * n ** 3 * D ** 5
     omega = 2.0 * math.pi * n
     tau = P_shaft / omega if omega > 0 else 0.0
 
-    kv, me = _solve_kv(tau, omega, U_bus, m_mot)
-    if kv is None:
-        return SolvePointOut(T=T, theta=theta, rpm=n * 60.0, I=0.0, P=0.0,
-                             kv=0.0, P_cu=0.0, ok=False)
+    if kv is None:                                  # 사이징 모드 — kv 를 푼다
+        kv, me = _solve_kv(tau, omega, U_bus, m_mot)
+        if kv is None:
+            fail.rpm = n * 60.0
+            fail.P_shaft = P_shaft
+            return fail
+    else:                                           # 평가 모드 — kv 고정
+        R_mot, I0 = motor_regression(m_mot, kv)
+        me = motor_elec(tau, omega, kv, R_mot, I0, U_bus)
 
-    # 전기 소요 — 로터 기수만큼, ESC 효율로 나눈다
-    P_elec = k.N_rot * U_bus * me.I / k.eta_esc
+    # 전기 소요 — 모터가 실제로 보는 전압은 U_req 다 (ESC 가 버스를 강압한다).
+    # U_bus 를 쓰면 부분 스로틀에서 전력이 스로틀의 역수만큼 과대평가된다.
+    # 사이징 모드에서는 U_req == U_bus 라 값이 같다.
+    P_elec = k.N_rot * me.U_req * me.I / k.eta_esc
     I_pack = P_elec / max(U_bus, 1e-9)
 
     return SolvePointOut(T=T, theta=theta, rpm=n * 60.0, I=I_pack, P=P_elec,
-                         kv=kv, P_cu=k.N_rot * me.P_cu, ok=True)
+                         kv=kv, P_cu=me.P_cu, P_shaft=P_shaft, U_req=me.U_req,
+                         ok=(me.U_req <= U_bus * (1.0 + 1e-9)))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # ① 모터 사이징
 # ══════════════════════════════════════════════════════════════════════════
+def hover_wake(T_1: float, d_prop: float, rho: float) -> float:
+    """호버 프롭 후류 속도 [m/s] — 운동량 이론 유도속도 v_i = √(T/(2ρA_disk)).
+
+    모터가 디스크 바로 아래에 있으므로 완전 후류(2·v_i)가 아니라 디스크면 값을 쓴다.
+    보수적인 쪽(대류 약함 → 온도 높음)이다.
+    """
+    A_disk = math.pi * d_prop * d_prop / 4.0
+    return math.sqrt(max(T_1, 0.0) / (2.0 * rho * A_disk))
+
+
+def t_hover_worst() -> float:
+    """열 판정에 쓸 호버 지속시간 [s] — **착륙 호버** (P4 확정).
+
+    ICD §8 A-3 의 "호버 지속 시간을 정의합니다 (천이 t_trans 기준? 이륙과 착륙 각각?)"
+    에 대한 답이다. 착륙을 고른 근거: §5.1 THRM 이 최악 조건을 착륙 호버로 못박았고
+    (방전 말기 → 저전압 → 고전류 → 동손 I²R), 이륙은 만충이라 전류가 낮고 모터도
+    아직 차갑다. 임무 프로파일의 **마지막 호버 세그먼트** 길이를 쓴다.
+    """
+    hovers = [seg for seg in k.MISSION_PROFILE if seg[1] == "hover"]
+    return hovers[-1][2] if hovers else 0.0
+
+
 def size_motor(MTOW: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
                U_bus: float, k_mot: float) -> SizeMotorOut:
     """① 요구 → 모터 질량.  m_mot 에 대한 **결정론적 이분법**.
 
-    [스텁] P4 에서 구현한다. solve_point 는 이제 준비돼 있다.
+    후보 질량마다:
+      · dash 작동점을 **사이징 모드**로 풀어 kv 를 정한다 (전개를 다 쓰는 점이므로)
+      · 그 kv 로 호버를 **평가 모드**로 풀어 부분 스로틀 동손을 얻는다
+      · thrm.motor_rise → 순항 정상상태와 호버 피크 중 **더 뜨거운 쪽** ≤ T_limit (g3)
+    만족하는 최소 m_mot 을 찾은 뒤 k_mot 을 곱한다.
+
+    [연속 축동력 충족 = 열 판정이다]  §5.1 은 "연속 축동력 충족 여부" 를 확인하라고
+    하는데, 브러시리스 모터가 어떤 축동력을 **연속으로** 낼 수 있는가는 정의상
+    권선이 타지 않는가다. THRM 이 순항 정상상태 온도로 그걸 직접 계산하므로
+    pm_mot 을 별도 제약으로 두면 이중계상이다. pm_mot 은 §3.3 문구대로
+    **이분법 브래킷**으로만 쓴다 — 값이 틀려도 답은 안 바뀌고 반복 횟수만 바뀐다.
+
+    ⚠ 내부 순환(크기 → 저항 → 효율 → 요구동력 → 크기)을 직전 반복값으로 닫지 않는다.
+       이분법만 순수성을 지킨다 (§5 ▶모듈 내부 순환).
+
+    단조성: 모터가 커지면 R_mot 이 내려가(회귀 지수 음수) 동손이 줄고, 표면적이 늘어
+    방열도 좋아진다. 연속 출력 한계도 질량에 비례한다. 즉 '가능 여부'가 m 에 단조라
+    이분법이 성립한다.
     """
+    D = pmap.d_prop
+    t_hv = t_hover_worst()
+
+    # ── g2: 팁 마하 — 모터와 무관하다 (rpm 은 요구추력이 정한다) ──
+    # 한계 위까지 훑어 '초과량' 으로 재야 g2 가 두 경우에 같은 의미를 갖는다.
+    W = MTOW * k.g
+    T_d, _, _, trim_ok = _trim(k.V_cr, W, aer, air)
+    if not trim_ok:
+        return SizeMotorOut(m_mot=0.0, I_dash=0.0, g2=0.0, g3=0.0, active="trim_fail",
+                            n_bisect=0, kv=0.0, T_peak=0.0, thr_hover=0.0,
+                            P_shaft_dash=0.0)
+    n_req, _, n_ok = _rpm_for_thrust(T_d / k.N_rot, k.V_cr, pmap, air, D,
+                                     cap=k.k_n_search_cap)
+    if not n_ok:
+        # 탐색 상한(팁 마하 한계의 k_n_search_cap 배) 안에서도 추력을 못 낸다
+        return SizeMotorOut(m_mot=0.0, I_dash=0.0, g2=-1.0, g3=0.0, active="thrust_fail",
+                            n_bisect=0, kv=0.0, T_peak=0.0, thr_hover=0.0,
+                            P_shaft_dash=0.0)
+    g2 = k.M_tip_max - M_tip(k.V_cr, n_req, D, air.a_snd)
+
+    def evaluate_m(m):
+        """후보 질량 하나를 평가한다. 반환: (성립 여부, dash, hover, thrm)"""
+        d = solve_point(k.V_cr, MTOW, m, pmap, aer, air, U_bus)      # 사이징 모드
+        if not d.ok:
+            return False, d, None, None
+        h = solve_point(0.0, MTOW, m, pmap, aer, air, U_bus,
+                        hover=True, kv=d.kv)                         # 평가 모드
+        if not h.ok:
+            return False, d, h, None                                 # 호버 전압 부족
+        v_wake = hover_wake(h.T / k.N_rot, D, air.rho)
+        th = thrm.motor_rise(d.P_cu, h.P_cu, m, k.V_cr, v_wake, t_hv, air)
+        return th.T_hot <= k.T_limit, d, h, th
+
+    # ── m_mot 이분법 ──
+    # 브래킷 하한만 pm_mot 추정치로 좁힌다 (§3.3 "이분법 초기 구간").
+    # 추정이 빗나가 하한이 이미 성립하면 절대 하한으로 되돌린다 — 브래킷 때문에
+    # 답을 지나쳐 너무 작은 모터를 반환하는 사고를 막는다.
+    d_probe = solve_point(k.V_cr, MTOW, k.m_mot_hi, pmap, aer, air, U_bus)
+    m_guess = d_probe.P_shaft / (k.pm_mot * 1000.0) if d_probe.P_shaft > 0 else k.m_mot_hi
+    lo = max(k.m_mot_lo, min(m_guess / k.k_mot_bracket, k.m_mot_hi))
+    hi = k.m_mot_hi
+    if evaluate_m(lo)[0]:
+        lo = k.m_mot_lo
+    ok_hi, d_hi, h_hi, th_hi = evaluate_m(hi)
+    if not ok_hi:
+        # 상한에서도 안 되면 이 설계점은 모터로 해결할 수 없다
+        return SizeMotorOut(m_mot=hi, I_dash=d_hi.I, g2=g2,
+                            g3=th_hi.margin_T if th_hi else -1.0,
+                            active="infeasible", n_bisect=0, kv=d_hi.kv,
+                            T_peak=th_hi.T_hot if th_hi else 0.0,
+                            thr_hover=(h_hi.U_req / U_bus) if h_hi else 0.0,
+                            P_shaft_dash=d_hi.P_shaft)
+    it = 0
+    for it in range(1, k.N_bisect_max + 1):
+        mid = 0.5 * (lo + hi)
+        if evaluate_m(mid)[0]:
+            hi = mid
+        else:
+            lo = mid
+        if hi - lo < 1e-6 * k.m_mot_hi:
+            break
+    m_min = hi
+
+    # ── 활성조건 — 열이 **어느 구간**에서 물렸나 (cruise / hover) ──
+    _, _, _, th_min = evaluate_m(m_min)
+    active = th_min.hot_at if th_min else "infeasible"
+
+    # ── k_mot 여유를 곱한 최종 모터로 진단값을 다시 낸다 ──
+    m_final = k_mot * m_min
+    _, d, h, th = evaluate_m(m_final)
+
     return SizeMotorOut(
-        m_mot=0.0,          # [스텁] 실제 모터 질량 아님
-        I_dash=0.0,         # [스텁]
-        g2=0.0,             # [스텁] 실제 팁 마하 판정 아님
-        g3=0.0,             # [스텁] 실제 열 판정 아님
-        active="stub",      # [스텁] cruise/hover 판별 미구현
-        n_bisect=0,
+        m_mot=m_final,
+        I_dash=d.I,
+        g2=g2,
+        g3=th.margin_T if th else -1.0,
+        active=active,
+        n_bisect=it,
+        kv=d.kv,
+        T_peak=th.T_hot if th else 0.0,
+        thr_hover=h.U_req / U_bus if h else 0.0,
+        P_shaft_dash=d.P_shaft,
     )
 
 

@@ -148,7 +148,10 @@ class SolvePointOut:
     I: float             # 팩 전류 [A]
     P: float             # 소요 전력 [W]
     kv: float            # 토크 평형의 해로 나오는 kv [rpm/V] — 설계변수 아님
-    P_cu: float          # 동손 [W] → THRM
+    P_cu: float          # 동손 [W] → THRM (**모터 1기당**)
+    P_shaft: float       # 프롭 축동력 [W] (**로터 1기당**) — 연속 비출력 판정용
+    U_req: float         # 모터 요구 전압 [V] — [로컬 개정 §11-16] kv 를 고정하고
+                         # 부분 스로틀로 평가할 때 스로틀 = U_req/U_bus 가 된다
     ok: bool             # 수렴 여부 — False 면 해당 설계점 infeasible
 
 
@@ -160,6 +163,10 @@ class SizeMotorOut:
     g3: float            # 열 한계 여유 = T_limit − T_peak (양수 합격)
     active: str          # 활성조건: "cruise" | "hover" — 모터 크기를 정한 쪽
     n_bisect: int        # 진단: 이분법 반복 횟수
+    kv: float            # dash 점이 정한 kv [rpm/V] — 호버는 이 kv 로 부분 스로틀 평가
+    T_peak: float        # 호버 종료 권선 온도 [°C] — 진단
+    thr_hover: float     # 호버 스로틀 [-] — 진단. 1.0 을 넘으면 호버 자체가 불가
+    P_shaft_dash: float  # dash 축동력 [W] — 진단 (연속 비출력 판정의 좌변)
 
 
 @dataclass
@@ -178,7 +185,11 @@ class EvaluateOut:
 class ThrmOut:
     T_cruise_ss: float   # 순항 정상상태 온도 [°C] — 호버 계산의 초기값
     T_peak: float        # 호버 종료 시점 권선 온도 [°C] → PROP.size_motor
-    margin_T: float      # 열 여유 = T_limit − T_peak [K]
+    T_hot: float         # 두 구간 중 **더 뜨거운** 쪽 [°C]  [로컬 개정 §11-17]
+    hot_at: str          # 그게 어느 구간인가: "cruise" | "hover"  → 활성조건
+    margin_T: float      # 열 여유 = T_limit − T_hot [K]
+                         # ICD §5.1 은 T_peak 기준으로 적었으나, 이 기체는 순항이
+                         # 더 뜨거울 수 있어 최대값 기준으로 바꿨다 (§11-17)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -193,6 +204,8 @@ class MissHistory:
     U_bus: list          # 버스 전압 [V]
     I_max: float         # 이력 중 최대 전류 [A]
     depleted: bool       # DoD 한계 도달 여부
+    sustain_at: float    # 팩 전압이 모자라 추력을 못 버틴 첫 시각 [s]. 없으면 -1
+                         # [로컬 개정 §11-22] 에너지 잔차와 분리해야 이분법이 단조다
 
 
 @dataclass
@@ -202,6 +215,9 @@ class RequiredEnergyOut:
     m_pack: float        # 팩 부자재 질량 [kg] → WGHT
     active: str          # 활성조건: "energy" | "power"
     n_bisect: int        # 진단: 이분법 반복 횟수
+    E_energy: float      # 거리 요구가 정한 용량 [Wh] — 진단
+    E_power: float       # 전류 요구가 정한 용량 [Wh] — 진단
+    I_max: float         # 임무 중 최대 팩 전류 [A] — 진단, COST 의 ESC 정격
 
 
 @dataclass

@@ -97,7 +97,7 @@ def evaluate(dv: DesignVars) -> Result:
         직전 반복값을 기억하면 배치 실행에서 설계점끼리 오염된다 (§5 ▶모듈 내부 순환).
         """
         sm = prop.size_motor(MTOW, pre.pmap, pre.aero, pre.atm, U_bus, dv.k_mot)
-        re = miss.required_energy(MTOW, sm.m_mot, dv, pre.pmap, pre.aero, pre.atm)
+        re = miss.required_energy(MTOW, sm.m_mot, sm.kv, dv, pre.pmap, pre.aero, pre.atm)
         st = strc.run(dv, pre.hull, pre.aero, MTOW)
         # m_mot 은 1기 기준으로 본다 — 사이징은 모터 한 개를 푸는 것이므로.
         # ICD §5 의사코드는 m_mot 을 그대로 더하고 있어 기수 곱이 빠져 있다 — [확정 필요]
@@ -111,8 +111,21 @@ def evaluate(dv: DesignVars) -> Result:
     r.diag.update({"wght_status": w.status, "S_hat": w.S_hat, "err": w.err,
                    "n_iter": w.n_iter,
                    "active_motor": pl.smot.active, "active_batt": pl.reqE.active,
-                   "n_bisect_mot": pl.smot.n_bisect, "n_bisect_E": pl.reqE.n_bisect})
+                   "n_bisect_mot": pl.smot.n_bisect, "n_bisect_E": pl.reqE.n_bisect,
+                   "E_energy": pl.reqE.E_energy, "E_power": pl.reqE.E_power,
+                   "I_max": pl.reqE.I_max})
     r.diag["S_split"] = wght.growth_split(w.history, None)
+
+    # 모터 회귀는 조사 범위 밖에서 무효다 (§8 A-2). 사이징 결과가 범위를 벗어나면
+    # R_mot·I0 가 외삽값이고 그 위에 g3(열 판정)이 얹혀 있으므로 로그에 남긴다.
+    r.diag["kv"] = pl.smot.kv
+    r.diag["T_peak"] = pl.smot.T_peak
+    r.diag["thr_hover"] = pl.smot.thr_hover
+    r.diag["P_shaft_dash"] = pl.smot.P_shaft_dash
+    r.diag["fit_range"] = (
+        "OK" if (k.m_mot_fit_lo <= pl.m_mot <= k.m_mot_fit_hi
+                 and k.kv_fit_lo <= pl.smot.kv <= k.kv_fit_hi)
+        else f"외삽 (m={pl.m_mot*1e3:.0f}g, kv={pl.smot.kv:.0f})")
 
     r.g["g2"], r.g["g3"] = pl.smot.g2, pl.smot.g3
     r.g["g4"] = w.g4
@@ -141,7 +154,7 @@ def evaluate(dv: DesignVars) -> Result:
 
     r.eval = ev = prop.evaluate(w.MTOW, pl.m_mot, pl.E_batt, dv.n_ser,
                                 pre.pmap, pre.aero, pre.atm, U_bus)
-    r.rng = rng = miss.achieved_range(w.MTOW, pl.m_mot, pl.E_batt, dv,
+    r.rng = rng = miss.achieved_range(w.MTOW, pl.m_mot, pl.smot.kv, pl.E_batt, dv,
                                       pre.pmap, pre.aero, pre.atm)
 
     # 질량 분해표 — 위치가 붙어야 무게중심·관성이 나오므로 배치(②) 뒤다.
@@ -225,7 +238,8 @@ def report(r: Result) -> None:
         for name, v in r.diag.items():
             print(f"  {name:<16s} {v}")
     print("=" * 64)
-    print("⚠ 이 출력의 숫자는 전부 [스텁]이다 — P0 은 배관만 깐 단계다. STUBS.md 참조.")
+    print("⚠ 아직 스텁이 남아 있다 — MISS(C2)·GEOM 배치(g6·g7)·STRC(g5)·STAB(C5,g8·g9)")
+    print("  ·COST(C7)·PROP.evaluate(C3·C6). 무엇이 가짜인지는 STUBS.md 를 볼 것.")
 
 
 if __name__ == "__main__":
