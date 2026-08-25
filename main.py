@@ -165,7 +165,7 @@ def evaluate(dv: DesignVars) -> Result:
             return prop.U_eval(re_.E_batt, dv.n_ser, sm_.I_dash), (sm_, re_)
 
         U_ev, (sm, re), n_U = _close_U_eval(outputs, U_bus)
-        st = strc.run(dv, pre.hull, pre.aero, MTOW)
+        st = strc.run(dv, pre.hull, pre.aero, MTOW, pod=pod_of(sm.m_mot))
         # m_mot 은 1기 기준으로 본다 — 사이징은 모터 한 개를 푸는 것이므로.
         # ICD §5 의사코드는 m_mot 을 그대로 더하고 있어 기수 곱이 빠져 있다 — [확정 필요]
         m_resp = k.N_rot * sm.m_mot + re.m_batt + re.m_pack + st.W_str
@@ -335,17 +335,22 @@ def report(r: Result) -> None:
         for name, v in r.diag.items():
             print(f"  {name:<16s} {v}")
     print("=" * 64)
-    print("⚠ 아직 스텁이 남아 있다 — MISS(C2)·GEOM 배치(g6·g7)·STRC(g5)·STAB(C5,g8·g9)")
-    print("  ·COST(C7)·PROP.evaluate(C3·C6). 무엇이 가짜인지는 STUBS.md 를 볼 것.")
+    print("⚠ 계수 미확정 구간이 남아 있다 — MISS(C2)·GEOM 배치(g6·g7)·STRC(g5)")
+    print("  ·STAB(C5,g8·g9)·COST(C7)·PROP.evaluate(C3·C6). 무엇이 가짜인지는 STUBS.md.")
 
 
 if __name__ == "__main__":
     # 대표 설계점 — 범위가 전부 TBD 라 이 숫자들도 스모크 테스트용이다.
     dv = DesignVars(
-        d_body=0.09, lambda_body=8.0, S_fin=0.036, x_fin=0.55, AR_fin=2.2,
+        d_body=0.09, lambda_body=8.0, S_fin=0.030, x_fin=0.60, AR_fin=2.2,
         f_mount=1.0, n_design=4.0, d_prop=0.13, pd_prop=1.50, n_ser=6,
         k_E=1.0, k_mot=1.0,
-    )   # g1~g9 를 전부 통과하는 설계점. P6 에서 g8·g9 동시 만족 영역을 찾아 갱신했다
-        # (이전 lambda 7.0 · x_fin 0.50 · f_mount 0.8 은 g8 불합격)
+    )   # g1~g9 를 전부 통과하는 설계점.
+        # ⚠ STRC 담당 코드 이식 후 갱신했다. 새 구조 모델은 포드 쉘과 핀 외피/코어
+        #   분리를 포함해 659 g → 799 g 로 무겁고, 늘어난 질량이 핀·포드(x≈0.59)에
+        #   붙어 x_cg 가 후퇴한다. 이전 점(S_fin 0.036 · x_fin 0.55)은 SM 0.917 →
+        #   0.839 로 떨어져 g8 불합격이 됐다. 구조 모델이 바뀐 결과지 이식 버그가 아니다.
+        # g8·g9 는 서로 반대로 움직이므로(docs §11-36) 합격 밴드가 좁은 대각선이다.
+        #   x_fin 0.58~0.60 밖은 한쪽이 깨진다.
         # pd_prop 은 §2 하한 규칙(prop.pd_prop_min ≈ 1.466)을 만족해야 한다
     report(evaluate(dv))

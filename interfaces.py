@@ -234,10 +234,12 @@ class AchievedRangeOut:
 # ══════════════════════════════════════════════════════════════════════════
 @dataclass
 class StrcOut:
-    W_str: float         # 구조 무게 [kg] → WGHT
+    W_str: float         # 구조 무게 [kg] → WGHT   (STRC 담당 코드의 m_str 과 같은 값)
     m_print: float       # 프린트 재료 무게 [kg] → COST
-    g5: float            # 응력 여유 (양수 합격)
-    breakdown_str: list  # [MassItem] — WGHT 의 x_cg·J 용
+    g5: float            # 응력 여유 (양수 합격)   (담당 코드의 g10 — ICD0-007 번호였다)
+    breakdown_str: list  # [MassItem] — WGHT 의 x_cg·J 용. [0] 은 동체 쉘이어야 한다
+    m_fill: float = 0.0  # 핀 루트 보강 질량 [kg] — 진단. **MTOW 의존 항이다**
+    w_fill: float = 0.0  # 핀 루트 보강 폭 [m] — 진단. line width 정수배로 양자화된다
 
 
 # ══════════════════════════════════════════════════════════════════════════

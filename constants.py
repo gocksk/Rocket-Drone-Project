@@ -168,8 +168,34 @@ k_air = 0.0257            # ICD외 TBD 공기 열전도율 [W/m·K] @20°C — N
 # STRC — 프린트 구조 (ICD §5.1 은 "슬라이서 회귀" 라고만 적었다)
 # ════════════════════════════════════════════════════════════════════════
 rho_mat = 1240.0          # ICD외 TBD 프린트 재료 밀도 [kg/m³] — PLA
-sigma_allow = 50.0e6      # ICD외 TBD 인장 허용응력 [Pa] — 적층 방향 약축 기준
 SF = 1.5                  # ICD외 TBD 안전계수
+
+# ── 재료 허용치 — STRC 담당 모델 기준 ──
+# 카탈로그값에 **적층 저하 계수**를 곱하고 안전계수로 나눠 쓴다.
+# FDM 은 층간 결합이 약해 카탈로그 인장강도를 그대로 쓸 수 없다.
+sigma_cat = 45.0e6        # ICD외 TBD 카탈로그 인장강도 [Pa]
+tau_cat = sigma_cat / math.sqrt(3.0)   # ICD외 von Mises 전단 환산
+k_layer = 0.5             # ICD외 TBD 적층 저하 계수 (굽힘·전단 공통 기본값)
+k_layer_b = k_layer       # ICD외 TBD 굽힘용
+k_layer_s = k_layer       # ICD외 TBD 전단용
+k_tau = 1.5               # ICD외 직사각 단면 최대전단 계수 (평균의 3/2)
+sigma_allow = 50.0e6      # ICD외 TBD 인장 허용응력 [Pa] — 구 모델 잔존, 미사용
+
+# ── 슬라이서 설정 — 프린트 실물 파라미터 ──
+w_line = 0.00045          # ICD외 TBD 압출 라인 폭 [m]. w_fill 을 이 정수배로 올린다
+n_peri = 3.0              # ICD외 TBD 둘레 수 → 핀 외피 두께 = n_peri·w_line
+k_dens = 0.95             # ICD외 TBD 100% 인필의 실효 충전율 (완전히 안 채워진다)
+w_fill_min = 0.001        # ICD외 TBD 루트 보강 폭 하한 [m]
+k_w = 0.6                 # ICD외 TBD 보강 폭 상한비 (루트 코드 대비) — g5 의 한 항
+k_sec = 1.0               # ICD외 TBD 핀 단면 형상계수 (직사각 대비 실제 익형 부피비)
+k_taper = 0.6             # ICD외 TBD 보강이 스팬을 따라 줄어드는 비율
+k_sl_pod = 1.0            # ICD외 TBD 포드 슬라이서 할증
+k_sl_fill = 1.0           # ICD외 TBD 루트 보강 슬라이서 할증
+t_wall_pod = 0.0012       # ICD외 TBD 포드 벽두께 [m]
+k_r = 0.4                 # ICD외 TBD 핀 질량의 대표 반경비 (J_xx 용)
+k_r_fill = 0.4            # ICD외 TBD 루트 보강의 대표 반경비
+rho_air = 1.225           # ICD외 해면 공기밀도 [kg/m³] — STRC 가 ATM 없이 쓸 때의
+                          #   대비값. **정상 경로는 AERO 의 q_cr 을 받는다** (§5.1)
 # 인필율 규칙 — 하중배수가 높을수록 채운다.  φ = phi_0 + k_phi·(n_design − n_ref_load)
 phi_0 = 0.25              # ICD외 TBD 기준 인필율 [-]
 k_phi = 0.05              # ICD외 TBD 하중배수당 인필율 증분 [-]
