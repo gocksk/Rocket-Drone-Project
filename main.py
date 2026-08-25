@@ -255,12 +255,26 @@ def evaluate(dv: DesignVars) -> Result:
     bd += [MassItem(a[0], a[1], x.get(a[0], 0.0), 0.0) for a in k.AVIO_LIST]
     r.mass = mp = wght.mass_props(w.MTOW, bd, pre.hull.l_body)
 
-    r.stab = sb = stab.run(pre.hull, pre.aero, mp, lay, ev.P_hover)
-    r.g["g8"], r.g["g9"] = sb.g8, sb.g9
-    r.diag.update({"SM": sb.SM, "M_dist": sb.M_dist, "x_cg": mp.x_cg})
+    # 조종 여유 — 천이 구간에서 로터 1기가 **더** 낼 수 있는 추력.
+    # STAB 이 PROP 을 직접 부르면 새 모듈 간 호출이 되므로 런처가 계산해 넘긴다 (§5).
+    V_tr = next((sg[3] for sg in k.MISSION_PROFILE if sg[1] == "trans"), 0.5 * k.V_cr)
+    T_av, _, lim = prop.thrust_max(V_tr, pl.m_mot, pl.smot.kv, pre.pmap,
+                                   pre.atm, pl.U_eval)
+    sp_tr = prop.solve_point(V_tr, w.MTOW, pl.m_mot, pre.pmap, pre.aero, pre.atm,
+                             pl.U_eval, kv=pl.smot.kv, pod=pod)
+    dT_rotor = max(T_av - sp_tr.T, 0.0) / k.N_rot
+    r.diag.update({"V_trans": V_tr, "T_avail_trans": T_av, "T_req_trans": sp_tr.T,
+                   "dT_rotor": dT_rotor, "thrust_limit": lim})
 
-    r.cost = ct = cost.run(pl.m_mot, ev.P_hover, pl.E_batt, dv.d_prop,
-                           pl.smot.I_dash, pl.strc.m_print)
+    r.stab = sb = stab.run(dv, pre.hull, pre.aero, mp, lay, dT_rotor)
+    r.g["g8"], r.g["g9"] = sb.g8, sb.g9
+    r.diag.update({"SM": sb.SM, "M_dist": sb.M_dist, "M_ctrl": sb.M_ctrl,
+                   "alpha_max": sb.alpha_max, "x_cg": mp.x_cg,
+                   "J_yy": mp.J_yy, "x_cp": pre.aero.x_cp})
+
+    # 연속 출력은 dash 축동력(로터 기수 합)을 쓴다 — 모터 단가의 기준
+    r.cost = ct = cost.run(pl.m_mot, k.N_rot * pl.smot.P_shaft_dash, pl.E_batt,
+                           dv.d_prop, pl.reqE.I_max, pl.strc.m_print)
 
     # ══ 성적표 (§6.2) ══
     r.ec = {
@@ -328,8 +342,10 @@ def report(r: Result) -> None:
 if __name__ == "__main__":
     # 대표 설계점 — 범위가 전부 TBD 라 이 숫자들도 스모크 테스트용이다.
     dv = DesignVars(
-        d_body=0.09, lambda_body=7.0, S_fin=0.036, x_fin=0.50, AR_fin=2.2,
-        f_mount=0.8, n_design=4.0, d_prop=0.13, pd_prop=1.50, n_ser=6,
+        d_body=0.09, lambda_body=8.0, S_fin=0.036, x_fin=0.55, AR_fin=2.2,
+        f_mount=1.0, n_design=4.0, d_prop=0.13, pd_prop=1.50, n_ser=6,
         k_E=1.0, k_mot=1.0,
-    )   # pd_prop 은 §2 하한 규칙(prop.pd_prop_min ≈ 1.466)을 만족해야 한다
+    )   # g1~g9 를 전부 통과하는 설계점. P6 에서 g8·g9 동시 만족 영역을 찾아 갱신했다
+        # (이전 lambda 7.0 · x_fin 0.50 · f_mount 0.8 은 g8 불합격)
+        # pd_prop 은 §2 하한 규칙(prop.pd_prop_min ≈ 1.466)을 만족해야 한다
     report(evaluate(dv))

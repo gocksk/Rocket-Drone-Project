@@ -85,6 +85,9 @@ class HullOut:
     # 여기서 나눠 낸다. [확정 필요]
     S_wet_body: float    # 노즈 + 원통 [m²]
     S_wet_fin: float     # 핀 양면 [m²]
+    x_wet_body: float    # 동체 젖음면적의 **축방향 도심** [m] — STRC 가 쉘 질량을
+                         # 놓는 위치다. 노즈분을 빼먹고 원통 중점에 두면 가장 무거운
+                         # 항목이 뒤로 밀려 x_cg 가 통째로 틀어진다 [로컬 개정 §11-35]
 
 
 @dataclass

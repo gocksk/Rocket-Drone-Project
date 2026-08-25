@@ -661,6 +661,47 @@ def size_motor(MTOW: float, pmap: PropMapOut, aer: AeroOut, air: AtmOut,
     )
 
 
+def thrust_max(V: float, m_mot: float, kv: float, pmap: PropMapOut,
+               air: AtmOut, U_bus: float) -> tuple:
+    """주어진 속도에서 파워트레인이 낼 수 있는 **최대 총추력** [N] 과 그 한계.
+
+    회전수 상한은 둘 중 낮은 쪽이다:
+      · 팁 마하 한계  n_tip_limit(V)
+      · 전압 한계     U_req(n) = U_bus 가 되는 n  (U_req 는 n 에 단조증가)
+
+    STAB 의 조종 여유(g9)가 "지금 쓰고 있는 추력 위로 얼마나 더 낼 수 있나" 를
+    묻기 때문에 필요하다. 반환: (T_total, n, "tip"|"volt")
+    """
+    D = pmap.d_prop
+    n_tip = n_tip_limit(V, D, air.a_snd)
+    if n_tip <= 0.0:
+        return 0.0, 0.0, "tip"
+
+    def U_req_at(n):
+        J = V / (n * D) if n > 0 else 0.0
+        P_sh = pmap.CP(J) * air.rho * n ** 3 * D ** 5
+        om = 2.0 * math.pi * n
+        R_mot, I0 = motor_regression(m_mot, kv)
+        return motor_elec(P_sh / om if om > 0 else 0.0, om, kv, R_mot, I0, U_bus).U_req
+
+    if U_req_at(n_tip) <= U_bus:
+        n, why = n_tip, "tip"
+    else:                                   # 전압이 먼저 걸린다 — 이분법
+        lo, hi = 0.0, n_tip
+        for _ in range(k.N_bisect_max):
+            mid = 0.5 * (lo + hi)
+            if U_req_at(mid) <= U_bus:
+                lo = mid
+            else:
+                hi = mid
+            if hi - lo < 1e-9 * n_tip:
+                break
+        n, why = lo, "volt"
+
+    J = V / (n * D) if n > 0 else 0.0
+    return k.N_rot * pmap.CT(J) * air.rho * n * n * D ** 4, n, why
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # ② 성능 평가
 # ══════════════════════════════════════════════════════════════════════════

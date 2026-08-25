@@ -67,12 +67,18 @@ def hull(dv: DesignVars) -> HullOut:
     S_wet_fin = 2.0 * dv.S_fin * k.k_thk        # 양면 + 두께 할증
     S_wet_body = S_wet_nose + S_wet_cyl
 
+    # 동체 쉘 질량이 놓이는 축방향 도심 — 면적가중.
+    # 원뿔 측면은 dA ∝ x dx 라 도심이 정점에서 2/3·l_nose 다 (오자이브는 조금 앞).
+    # 보수적으로(도심을 뒤에 두어 SM 을 낮게 보는 쪽) 원뿔 값을 쓴다. TBD.
+    x_wet_body = ((S_wet_nose * (2.0 / 3.0) * l_nose
+                   + S_wet_cyl * (l_nose + 0.5 * l_cyl)) / max(S_wet_body, 1e-12))
+
     return HullOut(
         S_ref=S_ref, S_wet=S_wet_body + S_wet_fin,
         l_body=l_body, r_body=r_body,
         b_fin=b_fin, c_root=c_root, c_tip=c_tip, t_fin=t_fin, x_t=x_t,
         x_fin=dv.x_fin, l_nose=l_nose, l_cyl=l_cyl,
-        S_wet_body=S_wet_body, S_wet_fin=S_wet_fin,
+        S_wet_body=S_wet_body, S_wet_fin=S_wet_fin, x_wet_body=x_wet_body,
     )
 
 
