@@ -80,12 +80,16 @@ def measure_noise(xs, ys):
 
 
 def measure(resp_of, MTOW_center, name='', rel_window=1e-3, n=401, k_sigma=3.0,
-            max_widen=8):
+            max_widen=8, max_narrow=12):
     """한 모델에 대한 전체 측정. resid_floor 권고값까지 낸다.
 
-    창이 양자보다 좁으면 표본이 전부 한 계단 안에 들어가 고유값이 1개가 되고,
-    그러면 '양자 크기 0'이라는 무의미한 답이 나온다. 그 권고값을 그대로 쓰면
-    하한 가드가 통째로 꺼진다. 그래서 고유값이 2개 이상 보일 때까지 창을 배로 넓힌다.
+    두 가지를 서로 다른 창에서 잰다.
+
+    · 양자 — 창을 **넓혀** 계단이 2개 이상 보이게 한다. 창이 양자보다 좁으면 표본이
+      전부 한 계단 안에 들어가 '양자 0'이라는 무의미한 답이 나오고, 그 권고값을
+      그대로 쓰면 하한 가드가 통째로 꺼진다.
+    · 노이즈 — 계단형이면 창을 **좁혀** 한 계단 안에 가둔 뒤 잰다. 넓은 창의 선형적합
+      잔차는 계단 자체를 반영하므로 노이즈가 아니다.
     """
     widened = 0
     while True:
@@ -99,14 +103,38 @@ def measure(resp_of, MTOW_center, name='', rel_window=1e-3, n=401, k_sigma=3.0,
     noise, slope = measure_noise(xs, ys)
     staircase = quantum is not None and quantum > 0.0
 
-    # resid_floor 는 '의미 없는 차이를 신호로 착각하지 않을' 크기여야 한다.
-    #  · 계단형이면 양자의 절반. 그보다 작은 resid 차이는 물리적으로 존재하지 않는다.
-    #    이때 선형적합 잔차는 '노이즈'가 아니라 계단 자체이므로 floor 산정에 쓰지 않는다.
-    #  · 매끄러우면 노이즈의 k_sigma 배.
-    floor_abs = quantum * 0.5 if staircase else k_sigma * noise
+    # [정정] 계단형이라고 양자의 절반을 floor 로 삼으면 안 된다.
+    #
+    # 예전 권고는 "양자보다 작은 resid 차이는 물리적으로 존재하지 않는다" 였는데,
+    # resid = m_fixed + resp(MTOW) - MTOW 에서 **MTOW 항이 연속**이라 틀렸다.
+    # 같은 계단 안이면 resp 가 상수라 resid 가 -1 기울기로 연속 감소하고, 고정점은
+    # 그 계단 위의 한 점으로 정확히 존재한다.
+    #
+    # 실측(2026-08-25, 기본 설계점): eps_conv 를 조이면 참값에 계속 가까워진다 —
+    #   1e-3 → 오차 28.84 mg,  1e-4 → 0.21 mg,  1e-5 → 0.03 mg
+    # 즉 양자는 응답의 분해능이지 MTOW 수렴의 한계가 아니다. 양자를 floor 로 삼으면
+    # 수렴을 일찍 끊어 오히려 오차가 커진다.
+    #
+    # 양자는 여전히 유용하지만 쓰이는 곳이 다르다 — limit_cycle 판정(delta_r) 쪽이다.
+    noise_floor, narrowed = noise, 0
+    if staircase:
+        w = rel_window
+        for _ in range(max_narrow):
+            w /= 2.0
+            narrowed += 1
+            if w < 1e-12:          # 배정도 해상도 아래 — 더 좁혀도 의미가 없다
+                break
+            xs2, ys2 = probe(resp_of, MTOW_center, w, n)
+            _, nu2 = measure_quantum(ys2)
+            if nu2 < 2:            # 한 계단 안에 갇혔다 — 여기 산포가 진짜 노이즈다
+                noise_floor, _ = measure_noise(xs2, ys2)
+                break
+
+    floor_abs = k_sigma * noise_floor
     return {'name': name, 'MTOW_center': MTOW_center, 'slope_local': slope,
-            'noise_abs': noise, 'staircase': staircase, 'quantum': quantum,
-            'n_unique': n_uniq, 'rel_window': rel_window, 'widened': widened,
+            'noise_abs': noise, 'noise_floor': noise_floor, 'staircase': staircase,
+            'quantum': quantum, 'n_unique': n_uniq, 'rel_window': rel_window,
+            'widened': widened, 'narrowed': narrowed,
             'floor_abs': floor_abs, 'floor_rel': floor_abs / MTOW_center}
 
 
@@ -130,7 +158,7 @@ def real_strc_case():
 
 
 def _report(rows):
-    print(f"{'모델':<22} {'국소 S':>8} {'산포':>11} {'양자':>11} {'고유':>5} "
+    print(f"{'모델':<22} {'국소 S':>8} {'노이즈':>12} {'양자':>11} {'고유':>5} "
           f"{'창':>9} {'권고 floor_rel':>15}")
     print('-' * 88)
     for r in rows:
@@ -139,10 +167,14 @@ def _report(rows):
         # 계단형에서는 선형적합 기울기가 '계단 경계를 가로지른 할선'이라 국소 S 가 아니다.
         # 숫자를 그대로 찍으면 S 로 오해되므로 가린다.
         sl = '—' if r['staircase'] else f"{r['slope_local']:.4f}"
-        print(f"{r['name']:<22} {sl:>8} {r['noise_abs']:>11.3e} "
+        # floor 산정에 실제로 쓴 노이즈를 보여준다 — 계단형이면 좁힌 창에서 다시 잰 값이다
+        nz = f"{r['noise_floor']:.3e}" + ('†' if r['narrowed'] else ' ')
+        print(f"{r['name']:<22} {sl:>8} {nz:>12} "
               f"{q:>11} {r['n_unique']:>5} {w:>9} {r['floor_rel']:>15.3e}")
     if any(r['widened'] for r in rows):
         print("  * 창이 양자보다 좁아 자동으로 넓힌 행 (한 계단 안에 갇히면 양자를 못 잰다)")
+    if any(r['narrowed'] for r in rows):
+        print("  † 계단형이라 창을 한 계단 안으로 좁혀 노이즈를 다시 잰 행")
 
 
 if __name__ == '__main__':
@@ -159,8 +191,10 @@ if __name__ == '__main__':
     M_star = _iterate(k.k_init * m_fixed, m_fixed, resp_of)['MTOW']
     print(f"\n[1] 실제 modules/strc.py  (수렴점 MTOW = {M_star:.6f} kg)")
     _report([measure(resp_of, M_star, '실제 STRC (현재)')])
-    print("  → 지금은 슬라이서 계수가 상수라 매끄럽다. k_sl_* 가 회귀 테이블로")
-    print("    교체되면 계단형이 될 수 있으므로 그때 이 줄을 다시 재야 한다.")
+    print("  → w_fill 양자화(11-39) 때문에 이미 계단형이다. 양자는 limit_cycle 판정")
+    print("    (delta_r) 쪽 정보이고, floor 는 한 계단 안 노이즈에서 나온다.")
+    print("  ⚠ 아직 구조 항만 잰 값이다. ICD §8 C-4 는 전체 응답 질량(구조+모터+배터리)을")
+    print("    요구하며, 그건 dt_miss 확정 후에 재야 한다.")
 
     # (2) 스텁 — 도구가 양자를 정말 복원하는지 대조 (아는 답과의 비교)
     MTOW0 = 6.33        # 선형 스텁 S=0.21, m_fixed=5.0 의 수렴점 근방
@@ -178,9 +212,17 @@ if __name__ == '__main__':
     print("\n[읽는 법]")
     print("  · 매끄러운 모델은 노이즈≈0, 양자 '연속' → 하한 가드가 사실상 불필요.")
     print("    기본값 1e-6 은 이 경우 넉넉한 안전값이지 측정값이 아니다.")
-    print("  · 계단형이면 노이즈가 아니라 양자가 floor 를 지배한다. 양자 미만의 resid")
-    print("    차이는 물리적 의미가 없으므로 그 절반을 하한으로 권고한다.")
-    print("  · 이보다 작게 잡으면 r̂ 이 노이즈만 재고, Ŝ 가 1 근처에도 이상에도 찍혀")
-    print("    발산 오판이 난다. 그래서 하한 미달은 '이미 수렴'으로 보낸다.")
+    print("  · 계단형이어도 양자를 floor 로 삼지 않는다 [정정]. resid 는 계단 위에서도")
+    print("    연속으로 줄고 고정점은 계단 위 한 점에 정확히 있다 — eps_conv 를 조이면")
+    print("    실제 오차가 계속 준다(1e-3 → 28.8 mg, 1e-4 → 0.21 mg). 양자를 floor 로")
+    print("    쓰면 수렴을 일찍 끊어 오히려 오차가 커진다. 그래서 창을 한 계단 안으로")
+    print("    좁혀 '진짜 노이즈'만 다시 재고, 그 3σ 를 권고한다.")
+    print("  · floor 를 이보다 작게 잡으면 r̂ 이 노이즈만 재고, Ŝ 가 1 근처에도 이상에도")
+    print("    찍혀 발산 오판이 난다. 그래서 하한 미달은 '이미 수렴'으로 보낸다.")
     print("\n[확정 절차]")
-    print("  나온 floor_rel 을 constants.py 의 resid_floor 로 넣는다.")
+    print("  · floor_rel 이 0 이면 한 계단 안이 완전히 평평하다는 뜻이고 하한 가드가")
+    print("    필요 없다. 0 을 그대로 넣지 말고 현행값을 유지할 것 — 가드가 통째로")
+    print("    꺼지면 수치 노이즈가 있는 다른 설계점에서 잡을 것을 못 잡는다.")
+    print("  · 0 이 아니면 그 값을 constants.py 의 resid_floor 로 넣는다.")
+    print("    단 eps_conv 보다 작아야 한다 — 아니면 가드가 수렴 판정을 선점한다")
+    print("    (그 경우는 _iterate 가 입력 예외로 막는다).")
