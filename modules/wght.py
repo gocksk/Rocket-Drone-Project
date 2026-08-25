@@ -192,10 +192,37 @@ def growth_split(history: list, resp_parts_of) -> dict:
 
     Ŝ_total = Σ S_i 이며 '스노우볼에 누가 기여하는가'의 지도가 된다.
 
-    [스텁] P7(통합 게이트)에서 구현한다 — 수렴 이력의 인접 두 점에서
-           구조·모터·배터리 각각의 차분을 뽑으면 된다.
+    resp_parts_of : MTOW → {이름: 응답질량 [kg]}. None 이면 분해하지 않는다.
+        resp_of 와 **같은 계산**이어야 한다 — 런처가 같은 클로저로 만든다.
+
+    ⚠ 이것은 국소 미분이 아니라 **할선**이다. 구조 응답이 슬라이서 이산화 때문에
+      계단형이라(로컬 개정 11-39) 국소 미분은 0 이거나 무한대로 나온다. 유한한
+      구간에 걸친 기울기를 봐야 의미가 있다.
+
+    ⚠ resp_parts_of 를 2회 더 호출한다 — 설계점당 비용이 그만큼 늘어난다.
+      DOE 배치에서 부담되면 None 을 넘겨 끈다.
+
+    [P7 에서 구현] 수렴 상태머신(_iterate·converge)은 건드리지 않았다.
     """
-    return {"struct": None, "motor": None, "batt": None}   # [스텁]
+    if resp_parts_of is None or len(history) < 2:
+        return {"struct": None, "motor": None, "batt": None}
+
+    # 이력의 인접 두 점을 쓴다. 다만 수렴 근처에서는 점들이 뭉쳐 있어 차분이 잡음에
+    # 묻히므로, 뒤에서부터 충분히 벌어진 짝을 찾는다.
+    M_b = history[-1][0]
+    M_a = None
+    for M, _, _ in reversed(history[:-1]):
+        if abs(M - M_b) > k.h_split_min * max(abs(M_b), 1e-12):
+            M_a = M
+            break
+    if M_a is None:
+        M_a = M_b * (1.0 - k.h_split)      # 이력이 전부 뭉쳐 있다 — 의도적으로 벌린다
+
+    pa, pb = resp_parts_of(M_a), resp_parts_of(M_b)
+    dM = M_b - M_a
+    if abs(dM) < 1e-15:
+        return {"struct": None, "motor": None, "batt": None}
+    return {key: (pb[key] - pa[key]) / dM for key in pa}
 
 
 def mass_props(MTOW: float, bd: list, l_body: float) -> MassProps:

@@ -107,7 +107,13 @@ _WGHT_FAIL = {
 }
 
 
-def evaluate(dv: DesignVars) -> Result:
+def evaluate(dv: DesignVars, *, split: bool = True) -> Result:
+    """설계점 하나를 끝까지 평가한다.
+
+    split : Ŝ 분해를 낼지. 켜면 resp_of 를 2회 더 부르므로 **설계점당 +17 %** 다
+        (P7 실측: 3.253 s → 3.810 s). DOE 배치에서는 끄는 게 맞다.
+        끄더라도 수치 경로는 하나도 안 바뀐다 — 진단 항목만 None 이 된다.
+    """
     r = Result()
 
     # ══ ⓪ 전처리 ══
@@ -174,6 +180,15 @@ def evaluate(dv: DesignVars) -> Result:
                                    W_str=st.W_str, smot=sm, reqE=re, strc=st,
                                    U_eval=U_ev, n_U=n_U)
 
+    def resp_parts_of(MTOW: float) -> dict:
+        """MTOW → {이름: 응답질량}. growth_split 의 차분 재료다.
+
+        resp_of 와 **같은 계산**이다 — 식을 복제하지 않으려고 그대로 불러 쓴다.
+        """
+        _, p = resp_of(MTOW)
+        return {"struct": p.W_str, "motor": k.N_rot * p.m_mot,
+                "batt": p.m_batt + p.m_pack}
+
     r.wght = w = wght.converge(m_fixed, resp_of)
     pl: RespPayload = w.payload
     r.diag.update({"wght_status": w.status, "S_hat": w.S_hat, "err": w.err,
@@ -182,7 +197,8 @@ def evaluate(dv: DesignVars) -> Result:
                    "n_bisect_mot": pl.smot.n_bisect, "n_bisect_E": pl.reqE.n_bisect,
                    "E_energy": pl.reqE.E_energy, "E_power": pl.reqE.E_power,
                    "I_max": pl.reqE.I_max})
-    r.diag["S_split"] = wght.growth_split(w.history, None)
+    r.diag["S_split"] = wght.growth_split(w.history,
+                                          resp_parts_of if split else None)
 
     # 모터 회귀는 조사 범위 밖에서 무효다 (§8 A-2). 사이징 결과가 범위를 벗어나면
     # R_mot·I0 가 외삽값이고 그 위에 g3(열 판정)이 얹혀 있으므로 로그에 남긴다.
