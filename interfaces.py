@@ -310,6 +310,8 @@ class RespPayload:
     smot: SizeMotorOut
     reqE: RequiredEnergyOut
     strc: StrcOut
+    U_eval: float        # §4.5 순환을 닫고 얻은 평가 전압 [V] — 진단
+    n_U: int             # U_eval 근찾기 반복 횟수 — 진단. -1 이면 해가 없다
 
 
 # ══════════════════════════════════════════════════════════════════════════

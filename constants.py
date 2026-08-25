@@ -122,8 +122,22 @@ N_trim_max = 40           # ICD외 트림 뉴턴 반복 상한
 dtheta_max = math.radians(15.0)   # ICD외 뉴턴 스텝 제한 [rad]
 theta_lo = math.radians(-20.0)    # ICD외 자세각 하한 (양력 과잉 → 기수 숙임)
 theta_hi = math.radians(89.0)     # ICD외 자세각 상한 (호버는 별도 경로)
+# dash 스로틀 목표 — kv 를 정하는 기준 (P5.6 확정, docs §11-31).
+# kv 를 "dash 에서 버스를 100% 쓰도록" 잡으면 전압 여유가 0 이라 V_max ≡ V_cr 이
+# 되고 C3(가중치 33.7%)가 정보를 잃는다. 게다가 네 모터가 전부 100% 면 차동 추력을
+# 위로 못 올려 **조종 권한이 0**이다 (§5.1 STAB "조종 모멘트 = 차동 추력 × arm_rotor").
+# 즉 여유는 선택이 아니라 조종성 요구다.
+# TBD: 값의 근거는 g9 다. P6 에서 STAB 이 조종 모멘트를 실제로 계산하면 교차검증한다.
+thr_dash = 0.85           # ICD외 TBD — dash 에서 버스 전압의 몇 %까지 쓸까
 kv_lo, kv_hi = 50.0, 20000.0      # ICD외 kv 근찾기 구간 [rpm/V]
 N_bisect_max = 80         # ICD외 1차원 이분법 반복 상한
+# §4.5 U_eval 순환 닫기 (resp_of 안)
+n_U_scan = 10             # ICD외 U 브래킷 하한을 찾는 고정 격자 점수
+eps_U = 1.0e-3            # ICD외 U_eval 수렴 허용오차 [V]
+N_U_max = 25              # ICD외 U_eval 근찾기 반복 상한
+V_max_cap = 2.5           # ICD외 V_max 탐색 상한 (V_cr 배수)
+n_V_grid = 40             # ICD외 V_max 격자 훑기 점수 — 요구추력이 V 에 단조가 아니라
+                          #   (호버 근방에서 높고 중간에 최소) 바로 이분법을 걸 수 없다
 k_n_search_cap = 3.0      # ICD외 팁 마하 한계를 넘겨 요구 rpm 을 찾을 때의 탐색 상한 배수
                           #   (g2 를 '초과량' 으로 재려면 한계 위도 봐야 한다)
 m_mot_lo, m_mot_hi = 0.002, 0.500   # ICD외 모터 질량 이분법 구간 [kg]

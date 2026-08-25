@@ -41,7 +41,7 @@ def segments(R_dash: float) -> list:
 
 def integrate(profile: list, MTOW: float, m_mot: float, kv: float, E_batt: float,
               dv: DesignVars, pmap: PropMapOut, aer: AeroOut,
-              air: AtmOut, SOC_0: float = 1.0) -> MissHistory:
+              air: AtmOut, SOC_0: float = 1.0, pod=None) -> MissHistory:
     """공용 커널 — 고정 스텝 dt_miss 전진. 매 스텝마다:
 
         prop.solve_point 호출 → P → I → SOC 감소 → U_ocv(SOC)로 버스 전압 갱신 → 거리 누적
@@ -76,7 +76,7 @@ def integrate(profile: list, MTOW: float, m_mot: float, kv: float, E_batt: float
         #  판정이 걸리지 않을 만큼 크게 준다 — 순수성에는 영향이 없다.)
         U_ref = 1.0e9
         sp = prop.solve_point(V, MTOW, m_mot, pmap, aer, air, U_ref,
-                              hover=(mode == "hover"), kv=kv)
+                              hover=(mode == "hover"), kv=kv, pod=pod)
         if not sp.ok:
             # 트림이나 rpm 이 안 풀린다 — 임무가 성립하지 않는다
             return MissHistory(t=ts, x=xs, E=Es, SOC=socs, U_bus=Us,
@@ -125,17 +125,17 @@ def integrate(profile: list, MTOW: float, m_mot: float, kv: float, E_batt: float
                        depleted=(E_used >= E_usable), sustain_at=sustain_at)
 
 
-def _left(E_batt: float, R_dash: float, MTOW, m_mot, kv, dv, pmap, aer, air) -> tuple:
+def _left(E_batt: float, R_dash: float, MTOW, m_mot, kv, dv, pmap, aer, air, pod=None) -> tuple:
     """임무를 마치고 **남는 가용 에너지** [Wh] 와 이력. 이분법의 잔차다.
 
     양수면 여유가 있고 음수면 모자란다. E_batt 에 대해 증가, R_dash 에 대해 감소라
     두 이분법 모두 단조다.
     """
-    h = integrate(segments(R_dash), MTOW, m_mot, kv, E_batt, dv, pmap, aer, air)
+    h = integrate(segments(R_dash), MTOW, m_mot, kv, E_batt, dv, pmap, aer, air, pod=pod)
     return E_batt * k.DoD - h.E[-1], h
 
 
-def _bisect_E(pred, MTOW, m_mot, kv, dv, pmap, aer, air) -> float:
+def _bisect_E(pred) -> float:
     """pred(E) 가 참이 되는 최소 E_batt — 결정론적 이분법. pred 는 E 에 단조여야 한다."""
     lo, hi = k.E_batt_lo, k.E_batt_hi
     if not pred(hi):
@@ -152,7 +152,8 @@ def _bisect_E(pred, MTOW, m_mot, kv, dv, pmap, aer, air) -> float:
 
 
 def required_energy(MTOW: float, m_mot: float, kv: float, dv: DesignVars,
-                    pmap: PropMapOut, aer: AeroOut, air: AtmOut) -> RequiredEnergyOut:
+                    pmap: PropMapOut, aer: AeroOut, air: AtmOut,
+                    pod=None) -> RequiredEnergyOut:
     """① 요구 임무 실적분 → 배터리 사이징.  E_batt 에 대한 **결정론적 이분법**.
 
       · 후보 용량마다 m_batt = E_batt/e_spec, R_pack = k_Rpack·n_ser/cap 로 닫고
@@ -168,18 +169,16 @@ def required_energy(MTOW: float, m_mot: float, kv: float, dv: DesignVars,
     되먹임은 바깥 WGHT 루프의 몫이다. 그래서 여기서는 잔차가 E_batt 에 단조다.
     """
     def run(E):
-        return _left(E, k.R_dash_min, MTOW, m_mot, kv, dv, pmap, aer, air)
+        return _left(E, k.R_dash_min, MTOW, m_mot, kv, dv, pmap, aer, air, pod)
 
     # (1) 거리 요구 — 남는 가용 에너지가 0 이 되는 최소 용량
-    E_energy = _bisect_E(lambda E: run(E)[0] >= 0.0,
-                         MTOW, m_mot, kv, dv, pmap, aer, air)
+    E_energy = _bisect_E(lambda E: run(E)[0] >= 0.0)
 
     # (2) 지속 가능성 — 팩 전압 강하 때문에 요구 추력을 못 버티는 구간이 없어야 한다.
     #     ICD 는 C-rate 상한(E_power)만 적었는데, c_rate_max 와 k_Rpack 이 서로
     #     맞지 않으면 "규정상 허용되는데 물리적으로 불가능한" 팩이 나온다.
     #     실제로 지금 상수 조합(90C · k_Rpack=0.010)이 그렇다. [로컬 개정 §11-23]
-    E_sustain = _bisect_E(lambda E: run(E)[1].sustain_at < 0.0,
-                          MTOW, m_mot, kv, dv, pmap, aer, air)
+    E_sustain = _bisect_E(lambda E: run(E)[1].sustain_at < 0.0)
 
     # (3) 전류 요구 — 연속 방전율 한계.
     #     ICD 는 E_power = I_max/c_rate_max 로 적었는데 이건 [Ah] 다.
@@ -200,7 +199,7 @@ def required_energy(MTOW: float, m_mot: float, kv: float, dv: DesignVars,
 
 def achieved_range(MTOW: float, m_mot: float, kv: float, E_batt: float,
                    dv: DesignVars, pmap: PropMapOut, aer: AeroOut,
-                   air: AtmOut) -> AchievedRangeOut:
+                   air: AtmOut, pod=None) -> AchievedRangeOut:
     """② 확정 스펙으로 달성 거리 — **같은 커널**을 거리에 대해 이분법으로 돌린다.
 
     "SOC 소진까지 dash 를 계속한다" 를 그대로 구현하면 착륙 몫이 남지 않아
@@ -209,18 +208,18 @@ def achieved_range(MTOW: float, m_mot: float, kv: float, E_batt: float,
     이 정의라야 k_E=1.0 에서 R_dash ≈ R_dash_min 이 성립한다.
     """
     lo, hi = 0.0, k.R_dash_cap
-    if _left(E_batt, lo, MTOW, m_mot, kv, dv, pmap, aer, air)[0] < 0.0:
+    if _left(E_batt, lo, MTOW, m_mot, kv, dv, pmap, aer, air, pod)[0] < 0.0:
         return AchievedRangeOut(R_dash=0.0, t_mission=0.0)   # 이착륙조차 못 한다
-    if _left(E_batt, hi, MTOW, m_mot, kv, dv, pmap, aer, air)[0] >= 0.0:
+    if _left(E_batt, hi, MTOW, m_mot, kv, dv, pmap, aer, air, pod)[0] >= 0.0:
         return AchievedRangeOut(R_dash=hi, t_mission=0.0)    # 탐색 상한 초과
     for _ in range(k.N_bisect_max):
         mid = 0.5 * (lo + hi)
-        if _left(E_batt, mid, MTOW, m_mot, kv, dv, pmap, aer, air)[0] >= 0.0:
+        if _left(E_batt, mid, MTOW, m_mot, kv, dv, pmap, aer, air, pod)[0] >= 0.0:
             lo = mid
         else:
             hi = mid
         if hi - lo < k.eps_bisect_rel * k.R_dash_cap:
             break
     R = lo
-    h = _left(E_batt, R, MTOW, m_mot, kv, dv, pmap, aer, air)[1]
+    h = _left(E_batt, R, MTOW, m_mot, kv, dv, pmap, aer, air, pod)[1]
     return AchievedRangeOut(R_dash=R, t_mission=h.t[-1])
