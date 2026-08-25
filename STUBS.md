@@ -319,15 +319,18 @@ P7 다음 단계(ICD §8 D-2 스크리닝 DOE)의 **배관만** 깔았다. 사�
 
 | 항목 | 상태 | 남은 것 |
 |---|---|---|
-| `doe/space.py` 상자 정의 | 구현 | **`screen` 상자의 6 축이 비어 있다** (아래) |
+| `doe/space.py` 상자 정의 | 구현 | **`screen` 6 축 · `main` 전 축이 비어 있다** (아래) |
 | `doe/sample.py` LHS | 구현 | 표준 라이브러리로 직접 깔았다 (scipy 미사용) |
 | `doe/row.py` 평면화 | 구현 | `Result` 를 아는 유일한 곳 |
 | `doe/run.py` 배치·재개·매니페스트 | 구현 | — |
 | `doe/report.py` 분석 | **일부** | EC 가중합 점수 미구현 · 민감도는 4분위 합격률뿐 |
 | `doe/gui.py` 런처 창 | 구현 | tkinter. 계산은 없고 `doe.run` 을 자식 프로세스로 띄운다 |
+| `doe/export.py` CSV 사본 | 구현 | 원본은 JSONL — 분석·재개는 그쪽을 본다 |
 
 ### 비어 있는 것
 
+- **`main` 상자는 전 축이 `None`** — 본 DOE 의 범위는 스크리닝이 만들어 주는 것이라
+  미리 적지 않았다. `--box-file` 로 앞 실행의 매니페스트를 그대로 물려받는다.
 - **`screen` 상자의 6 축이 `None`** — `d_body` `lambda_body` `S_fin` `x_fin_ratio`
   `AR_fin` `pd_prop`(상한). ICD §8 B-2 미확정이라 값을 지어넣지 않았고, 그 상태로
   실행하면 런처가 거부한다. `--set` 으로 넣어야 돈다. ICD §2 가 범위를 준 5 축
