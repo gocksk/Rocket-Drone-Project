@@ -18,6 +18,7 @@ CLAUDE.md 규칙 2(숫자를 코드에 박지 않는다)와 부딪히는 지점�
 from __future__ import annotations
 
 import functools
+import json
 
 import constants as k
 from interfaces import DesignVars
@@ -111,7 +112,48 @@ def box_screen() -> dict:
     }
 
 
-BOXES = {"smoke": box_smoke, "screen": box_screen}
+def box_main() -> dict:
+    """본 DOE 상자 — **전 축이 비어 있다.** 스크리닝이 만들어 주는 것이기 때문이다.
+
+    여기에 숫자를 미리 적어 두면 안 된다. 본 DOE 의 범위는 스크리닝에서 유효율과
+    탈락 축을 보고 좁히거나 넓힌 결과이고, 그 전에 적은 값은 근거가 없는데도
+    "확정된 범위" 로 굳는다.
+
+    쓰는 법은 둘이다.
+      · `--box-file runs/screen.manifest.json` — 스크리닝 실행의 상자를 그대로 받는다
+      · `--box-file box_main.json` + `--set` — 받아서 손보고 쓴다
+
+    이름을 따로 두는 이유는 매니페스트의 `box_name` 이다. 몇 달 뒤 로그 더미에서
+    "이건 스크리닝이었나 본 DOE 였나" 를 파일만 보고 알 수 있어야 한다.
+    """
+    return {a: None for a in AXES}
+
+
+BOXES = {"smoke": box_smoke, "screen": box_screen, "main": box_main}
+
+
+def load_box(path: str) -> dict:
+    """상자를 파일에서 읽는다. **상자 JSON 과 실행 매니페스트를 둘 다 받는다.**
+
+    스크리닝을 돌리면 상자가 이미 매니페스트에 통째로 찍혀 있다. 그걸 그대로
+    다음 단계의 입력으로 쓸 수 있어야 손으로 --set 을 열한 번 다시 치지 않는다
+    (그 과정에서 한 축을 잘못 옮겨 적으면 다음 배치 전체가 조용히 어긋난다).
+    """
+    with open(path, encoding="utf-8") as f:
+        d = json.load(f)
+    if isinstance(d.get("box"), dict):        # 매니페스트다 — 상자만 꺼낸다
+        d = d["box"]
+    box = {}
+    for a in AXES:
+        v = d.get(a)
+        box[a] = None if v is None else (float(v[0]), float(v[1]))
+    return box
+
+
+def save_box(box: dict, path: str) -> None:
+    """상자를 JSON 으로. 매니페스트와 같은 형식이라 서로 오간다."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(describe(box), f, ensure_ascii=False, indent=1)
 
 
 def parse_set(s: str) -> tuple:
@@ -137,9 +179,14 @@ def parse_focus(s: str) -> tuple:
     return name, float(f)
 
 
-def resolve(name: str, sets=(), focuses=()) -> dict:
-    """상자 이름 + CLI 조절 → 최종 상자. `--set` 을 먼저, `--focus` 를 나중에."""
+def resolve(name: str, sets=(), focuses=(), file: str | None = None) -> dict:
+    """상자 이름 + 파일 + CLI 조절 → 최종 상자.
+
+    순서는 **이름 → 파일 → `--set` → `--focus`** 다. 뒤엣것이 앞엣것을 덮는다.
+    """
     box = dict(BOXES[name]())
+    if file:
+        box.update({a: v for a, v in load_box(file).items() if v is not None})
     for n, rng in sets:
         box[n] = rng
     nom = nominal_sample()

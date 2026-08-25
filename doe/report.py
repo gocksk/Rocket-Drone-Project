@@ -64,6 +64,20 @@ def _manifest(path: str) -> None:
             print(f"    {a:14s} {b[0]:12.5f} – {b[1]:<12.5f}")
 
 
+def _mixed(rows: list) -> None:
+    """한 파일에 여러 실행이 섞였는지 — id 는 실행 안에서만 유일하다."""
+    runs = Counter(r.get("run") or "(도장 없음)" for r in rows)
+    ids = Counter((r.get("run"), r["id"]) for r in rows)
+    dup = sum(1 for c in ids.values() if c > 1)
+    if len(runs) > 1 or dup:
+        print("\n⚠ 이 로그에 여러 실행이 섞여 있다.")
+        for name, c in runs.most_common():
+            print(f"    {name:28s} {c:6d} 행")
+        if dup:
+            print(f"    같은 (실행, id) 가 {dup} 쌍 겹친다 — 아래 통계는 그만큼 이중계산된다.")
+        print("    실행별로 갈라 보려면 --out 을 나눠 다시 돌린다.")
+
+
 def _outcomes(rows: list) -> None:
     _hr("1. 표본 결과 — 유효 표본 비율과 탈락 사유")
     n = len(rows)
@@ -151,9 +165,12 @@ def _axes(rows: list) -> None:
 
 def _purity(rows: list) -> None:
     _hr("5. 순수성 — 같은 설계점이 같은 답을 냈나")
-    by_id = {r["id"]: r for r in rows}
-    pairs = [(r, by_id[r["dup_of"]]) for r in rows
-             if r.get("dup_of") is not None and r["dup_of"] in by_id]
+    # (실행, id) 로 짝을 찾는다 — id 만으로 찾으면 다른 실행의 행과 짝지어져
+    # 순수성 판정이 거짓으로 깨진다.
+    by_key = {(r.get("run"), r["id"]): r for r in rows}
+    pairs = [(r, by_key[(r.get("run"), r["dup_of"])]) for r in rows
+             if r.get("dup_of") is not None
+             and (r.get("run"), r["dup_of"]) in by_key]
     if not pairs:
         print("  복제 쌍이 없다 (--dup-frac 0 으로 돌렸다).")
         return
@@ -195,6 +212,7 @@ def main_cli(argv=None) -> int:
         return 2
     _hr(f"DOE 보고 — {path}")
     _manifest(path)
+    _mixed(rows)
     _outcomes(rows)
     _gates(rows)
     _ec(rows)
