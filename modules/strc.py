@@ -460,7 +460,7 @@ class _GeomShim:
         담당자(ICD0-007)          ICD0-008
         ---------------------    ------------------------------------------
         c_r, c_t                 hull.c_root, hull.c_tip
-        t_wall                   geom.wall_thickness(dv)
+        t_wall                   hull.t_wall  (GEOM 단독 소유, 로컬 개정 11-41)
         d_pod, l_pod, x_pod      geom.pod(...)  — 런처가 넘긴다 (모터 질량 의존)
         arm_rotor                hull.r_body + f_mount·hull.b_fin
         S_wet_body, l_body       그대로
@@ -477,12 +477,15 @@ class _GeomShim:
         self.t_fin = hl.t_fin
         self.b_fin = hl.b_fin                    # [이식 1/5] 진짜 핀 스팬
         self.arm_rotor = hl.r_body + dv.f_mount * hl.b_fin
-        self.t_wall = k.t_0 + k.k_t * (dv.n_design - k.n_ref_load)
+        self.t_wall = hl.t_wall          # GEOM 이 낸 값 — 여기서 다시 계산하지 않는다
         self.t_wall_pod = k.t_wall_pod
 
         # [이식 2/5] AERO 가 내는 값 — 담당자 코드의 자체 계산보다 우선한다.
-        # 담당자 CN_alpha_fin 은 **핀 1장·S_fin_1 기준**이고 AERO 것은 4장 합·S_ref
-        # 기준이라 정규화가 다르다. 같은 물리량(핀 1장의 법선력)이 되도록 환산한다.
+        #
+        # **정규화 규약은 AERO 기준으로 확정됐다** (로컬 개정 11-42):
+        #     CN_alpha_fin  ≡  핀 4장 합, S_ref 기준
+        # 담당자 코드 내부는 핀 1장·S_fin_1 기준이라 여기서 환산해 넣는다. 이건
+        # 미결이 아니라 **한 방향 변환**이다 — 계약값은 언제나 AERO 것 하나다.
         self.q_cr = aer.q_cr
         S_fin_1 = dv.S_fin / k.N_rot
         self.CN_alpha_fin_1 = (aer.CN_alpha_fin * aer.S_ref

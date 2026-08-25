@@ -24,7 +24,7 @@ h=0 에서 ρ=1.2250 · a=340.29 · μ=1.789e-5. 기존 `common/atm.py` 를 ICD0
 | 함수 | 상태 | 남은 것 |
 |---|---|---|
 | `hull(dv)` | 구현 | 손계산 대조 통과 |
-| `wall_thickness` | 구현 | **원래 STRC 소관**이다. P6 에서 STRC 가 진짜 벽두께를 내면 옮긴다 |
+| `wall_thickness` | 구현 | 개념상 STRC 소관이나 `d_internal` 이 ⓪에서 먼저 쓴다. **GEOM 이 단독 소유**하고 `HullOut.t_wall` 로 STRC 에 보낸다 (docs 11-41). 식을 여기 밖에서 다시 쓰지 않는다 |
 | `box_from_volume` | 구현 | 내부 원에 **내접**하는 상자 = 기하학적 최대. 배선·완충재 몫이 없어 **g6 이 낙관적**이다 (충전율 계수 미정) |
 | `pod(...)` | 구현 | 포드 기하. §11-2 포드 항력 배선이 이걸 쓴다 (P5.6) |
 | `layout(...)` | 구현 | `LAYOUT_ORDER` 순서로 기수부터 적재 · `arm_rotor = r_body + f_mount·b_fin` |
@@ -107,7 +107,7 @@ h=0 에서 ρ=1.2250 · a=340.29 · μ=1.789e-5. 기존 `common/atm.py` 를 ICD0
 | 하중 케이스 3종 (추력 / 고속 off-design / 합성) | 구현 | `n_ref_load` `alpha_lim` TBD |
 | 굽힘 + 전단 분리 검산 (g5) | 구현 | `sigma_cat` `k_layer` `k_tau` `k_w` `k_sec` `k_taper` TBD |
 | 루트 보강 폭 `w_fill` 폐형해 | 구현 | 슬라이서 line width 로 **양자화**된다 — 아래 참조 |
-| 벽두께 사이징 | 구현 | STRC 가 `t_wall` 을 내는데 **GEOM 이 같은 식을 복제**하고 있다 (docs §11-27). 어댑터가 세 번째 복제본을 만들었다 — 한 곳으로 모아야 한다 [확정 필요] |
+| 벽두께 사이징 | 구현 | **해결.** `geom.wall_thickness` 단독 소유 → `HullOut.t_wall` 로 흐른다 (docs 11-41). 식이 한 곳뿐이다 |
 
 ⚠ **`w_fill` 양자화가 MTOW 수렴에 계단을 만든다.** `w_fill = ceil(w_req/w_line)·w_line`
 이라 MTOW 가 올라가면 `W_str` 이 매끄럽게가 아니라 뛴다. 실측:
@@ -142,6 +142,17 @@ h=0 에서 ρ=1.2250 · a=340.29 · μ=1.789e-5. 기존 `common/atm.py` 를 ICD0
 후퇴한다. 이전 점(`S_fin` 0.036 · `x_fin` 0.55)은 SM 0.917 → 0.839 로 떨어져 g8
 불합격이 됐다. 구조 모델이 바뀐 결과지 이식 버그가 아니다.
 `x_fin` 0.60 · `S_fin` 0.030 으로 옮겨 g1~g9 를 다시 전부 통과시켰다.
+
+✅ **확정된 것 (docs 11-41~43).**
+
+| 항목 | 결정 |
+|---|---|
+| 상수 충돌 11건 | **`constants.py` 값 채택.** `phi_0` 0.25 · `k_phi` 0.05 · `n_ref_load` 3.0 · `rho_mat` 1240 · `k_sl_shell` 1.15 · `k_sl_fin` 1.12 · `alpha_lim` 4° 등. 담당자 코드는 안 고쳤다 — 이름이 `constants.py` 에 있는 것만으로 우리 값이 이긴다 |
+| `CN_alpha_fin` 정규화 | **AERO 기준.** 핀 4장 합 · `S_ref` 기준이 계약값이다. 어댑터가 담당 코드 내부 규약(1장·`S_fin_1`)으로 한 방향 환산한다 |
+| `t_wall` 복제 | **GEOM 단독 소유.** `HullOut.t_wall` 로 흐른다. 식의 구현은 `geom.wall_thickness` 하나뿐 |
+
+⚠ 상수 11건은 "**어느 쪽이 맞는지**"가 아니라 "**어느 쪽을 쓸지**"를 정한 것이다.
+실측·시험 인쇄로 확정하는 일은 §8 B 에 그대로 남아 있다.
 
 ⚠ **담당자에게 보고할 것 — 원본의 잠재 버그.**
 `arm_rotor = float(getattr(geo, "arm_rotor", float(dv.arm_rotor)))` 는 파이썬이

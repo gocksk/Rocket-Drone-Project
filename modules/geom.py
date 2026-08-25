@@ -79,21 +79,24 @@ def hull(dv: DesignVars) -> HullOut:
         b_fin=b_fin, c_root=c_root, c_tip=c_tip, t_fin=t_fin, x_t=x_t,
         x_fin=dv.x_fin, l_nose=l_nose, l_cyl=l_cyl,
         S_wet_body=S_wet_body, S_wet_fin=S_wet_fin, x_wet_body=x_wet_body,
+        t_wall=wall_thickness(dv),
     )
 
 
 def wall_thickness(dv: DesignVars) -> float:
-    """벽두께 [m] — 하중배수에 비례해 두꺼워진다.
+    """벽두께 [m] — 하중배수에 비례해 두꺼워진다. **이 식의 유일한 구현이다.**
 
-    ⚠ 원래 STRC 소관이다. 배치가 내부 지름을 알아야 해서 임시로 여기 둔다.
-      P6 에서 STRC 가 진짜 벽두께를 내면 그쪽에서 받아온다. [확정 필요]
+    개념적으로는 STRC 소관인데 GEOM 의 `d_internal` 이 ⓪에서 먼저 필요로 한다.
+    모듈끼리 못 부르므로(§5) 여기서 계산해 `HullOut.t_wall` 에 실어 보내고, STRC 는
+    그걸 받아 쓴다. **이 함수 밖에서 같은 식을 다시 쓰지 않는다** — 한쪽만 고치면
+    쉘 질량과 내부 지름이 조용히 어긋난다 [로컬 개정 11-41].
     """
     return k.t_0 + k.k_t * (dv.n_design - k.n_ref_load)
 
 
 def d_internal(dv: DesignVars, hl: HullOut) -> float:
     """동체 내부 지름 [m]."""
-    return dv.d_body - 2.0 * wall_thickness(dv)
+    return dv.d_body - 2.0 * hl.t_wall
 
 
 def box_from_volume(vol: float, d_int: float) -> tuple:
