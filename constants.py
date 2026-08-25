@@ -326,3 +326,7 @@ k_finproj = 0.7           # ICD외 TBD 핀 측면 투영 유효 비율 [-]
 # ── AERO Barrowman ──
 CN_nose = 2.0             # ICD외 노즈 법선력 기울기 [1/rad] — Barrowman 표준값 (기저 d_body)
 k_cp_nose = 0.466         # ICD외 TBD 노즈 압력중심 위치 (l_nose 대비) [-] — 오자이브 기준
+
+# ── P7 통합 게이트 진단 ── (ICD외 — 물리 상수가 아니라 수치 진단 설정이다)
+h_split = 0.02            # ICD외 growth_split 할선 스텝 (MTOW 상대) [-]
+h_split_min = 0.002       # ICD외 이력 두 점이 이보다 붙어 있으면 차분이 잡음에 묻힌다 [-]
