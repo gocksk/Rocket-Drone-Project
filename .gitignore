@@ -217,3 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 p7_report.txt
+
+# DOE 배치 산출물 — 로그·매니페스트는 저장소에 넣지 않는다 (설계점당 한 줄, 금방 커진다)
+runs/
