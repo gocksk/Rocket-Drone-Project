@@ -19,7 +19,7 @@ from interfaces import (DesignVars, PreOut, RespPayload, Result, MassItem,
                         FAIL_NONE, FAIL_GEOM, FAIL_G1, FAIL_G2, FAIL_G3,
                         FAIL_G4_STRUCTURAL, FAIL_G4_NUMERICAL, FAIL_G4_MAXITER)
 from modules.geom import GeomInfeasible
-from modules import atm, geom, aero, prop, miss, strc, wght, stab, cost
+from modules import atm, geom, aero, prop, thrm, miss, strc, wght, stab, cost
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -141,16 +141,25 @@ def evaluate(dv: DesignVars) -> Result:
     r.g["g5"] = pl.strc.g5
 
     # ══ ② 후처리 ══
-    # 부품 부피를 밀도 상수로 환산해 치수를 만든다 — 부피 = 질량 / rho_*
+    # 부품 치수 — 밀도로 부피를 내고 동체 내부 원에 내접하는 상자로 만든다.
+    # 모터 치수는 THRM 이 이미 열용량·표면적용으로 환산해 둔 것을 그대로 쓴다
+    # (GEOM 이 THRM 을 부르면 새 모듈 간 직접 호출이 되므로 런처가 옮긴다, §5).
+    d_int = geom.d_internal(dv, pre.hull)
+    D_mot, L_mot, _ = thrm.motor_geometry(pl.m_mot)
     dims = {
-        "batt": (pl.m_batt / k.rho_pack, 0.0, 0.0),   # [스텁] L,W,H 분해 미구현
-        "motor": (pl.m_mot / k.rho_mot, 0.0, 0.0),    # [스텁]
+        "batt": geom.box_from_volume((pl.m_batt + pl.m_pack) / k.rho_pack, d_int),
+        "payload": geom.box_from_volume(k.W_pl / k.rho_payload, d_int),
+        "motor": (L_mot, D_mot, D_mot),
         **{a[0]: (a[2], a[3], a[4]) for a in k.AVIO_LIST},
-        "payload": (0.0, 0.0, 0.0),                   # [스텁]
     }
     r.layout = lay = geom.layout(dv, pre.hull, dims)
-    r.fit = fit = geom.check_fit(dv, pre.hull, lay, dims)
+    # 단면 검사는 데이터시트 치수를 가진 품목만 본다 — batt·payload 는 내부 원에
+    # 내접하도록 만들어져 대각선이 정의상 d_int 라 검사가 무의미해진다.
+    r.fit = fit = geom.check_fit(dv, pre.hull, lay, dims,
+                                 fixed_section={a[0] for a in k.AVIO_LIST})
     r.g["g6"], r.g["g7"] = fit.g6, fit.g7
+    r.diag.update({"d_int": d_int, "arm_rotor": lay.arm_rotor,
+                   "L_batt": dims["batt"][0], "l_int": pre.hull.l_cyl - 2 * k.d_end})
 
     r.eval = ev = prop.evaluate(w.MTOW, pl.m_mot, pl.E_batt, dv.n_ser,
                                 pre.pmap, pre.aero, pre.atm, U_bus)

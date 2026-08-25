@@ -227,6 +227,25 @@ lam_fin = 0.5             # ICD외 TBD 핀 테이퍼비 λ = c_tip/c_root [-]
 tc_fin = 0.12             # ICD외 TBD 핀 두께비 t/c [-] — STRC 와 공동 확정
 k_thk = 1.03              # ICD외 TBD 핀 젖음면적 두께 할증 [-]
 
+# ── GEOM 배치 규약 (§5.1 layout·check_fit) ──
+# 벽두께 규칙 — 원래 STRC 소관이나 배치가 내부 지름을 알아야 해서 여기 둔다.
+# P6 에서 STRC 가 진짜 벽두께를 내면 그쪽을 쓰도록 옮긴다. [확정 필요]
+t_0 = 0.0016              # ICD외 TBD 기준 벽두께 [m]
+k_t = 0.0002              # ICD외 TBD 하중배수당 벽두께 증분 [m]
+n_ref_load = 3.0          # ICD외 TBD 벽두께 기준 하중배수 [-]
+d_end = 0.005             # ICD외 TBD 내부 끝단 여유 (앞뒤 각각) [m]
+f_pod_c = 0.40            # ICD외 TBD 포드 축방향 위치 (핀 루트 코드 대비) [-]
+t_pod = 0.002             # ICD외 TBD 포드 벽두께 [m]
+f_pod = 3.5               # ICD외 TBD 포드 최소 세장비 l_pod/d_pod [-]
+d_hub = 0.010             # ICD외 TBD 프롭 허브 여유 [m]
+rho_payload_kgL = 1.0     # ICD외 TBD 페이로드 밀도 [kg/L]
+rho_payload = 1000.0 * rho_payload_kgL   # [kg/m³]
+
+# 동체 안 적재 순서 — 기수부터. §5.1 layout 의 "카메라 → 센서 → 배터리 → FC/ESC".
+# ⚠ ESC 가 없다. ICD 어디에도 ESC 질량·치수가 없어서 넣지 못했다 (COST 에 단가만
+#   있다). 실제로는 여기 자리를 차지하므로 g6 이 낙관적이다. [확정 필요]
+LAYOUT_ORDER = ["camera", "sensor", "payload", "batt", "fc", "rx_vtx"]
+
 # ── AERO 항력 빌드업 (ICD §5.1 은 성분 목록만 적었다) ──
 k_base = 0.18             # ICD외 TBD 기저 항력계수 (S_ref 기준) [-]
 k_int = 0.10              # ICD외 TBD 핀-동체 접합부 간섭 계수 [-]
