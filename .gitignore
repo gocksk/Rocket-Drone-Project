@@ -220,3 +220,6 @@ p7_report.txt
 
 # DOE 배치 산출물 — 로그·매니페스트는 저장소에 넣지 않는다 (설계점당 한 줄, 금방 커진다)
 runs/
+
+# Pareto 선택 결과 — 입력 CSV와 코드는 저장하지만 재생성 가능한 결과는 저장하지 않는다
+pareto_selector/results/
